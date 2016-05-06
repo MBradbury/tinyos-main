@@ -35,7 +35,7 @@
  * for the Atmega128. It currently does nothing.
  *
  * <pre>
- *  $Id: McuSleepC.nc,v 1.6 2010-06-29 22:07:43 scipio Exp $
+ *  $Id: McuSleepC.nc,v 1.1 2014/11/26 19:31:45 carbajor Exp $
  * </pre>
  *
  * @author Philip Levis
@@ -50,9 +50,18 @@ module McuSleepC {
   }
   uses {
     interface McuPowerOverride;
+	#if defined(POWERTOSSIMZ)
+	  interface Atm128EnergyHandler;
+	#endif
   }
 }
 implementation {
+
+  #if defined(POWERTOSSIMZ)
+	#include "atm128_sim.h"
+	#include "atm128hardware.h"
+  #endif
+  
   bool dirty = TRUE;
   mcu_power_t powerState = ATM128_POWER_IDLE;
 
@@ -111,24 +120,43 @@ implementation {
     if (dirty) {
       uint8_t temp;
       computePowerState();
+	  #if defined(POWERTOSSIMZ)
+	    call Atm128EnergyHandler.mcu_state_change(powerState);
+	  #endif
       //dirty = 0;
       temp = MCUCR;
       temp &= 0xe3;
       temp |= atm128PowerBits[powerState] | (1 << SE);
       MCUCR = temp;
     }
-    sei();
-    // All of memory may change at this point...
-    asm volatile ("sleep" : : : "memory");
-    cli();
+	#if defined(POWERTOSSIMZ)
+	  //Uncomment next lines
+      //sei();
+      // All of memory may change at this point...
+      //asm volatile ("sleep" : : : "memory");
+      //cli();
+	#elif
+	  sei();
+      // All of memory may change at this point...
+      asm volatile ("sleep" : : : "memory");
+      cli();
+	#endif
+	
   }
 
   async command void McuPowerState.update() {
     atomic dirty = 1;
+	#if defined(POWERTOSSIMZ)
+	  call McuSleep.sleep(); 
+	#endif
   }
 
  default async command mcu_power_t McuPowerOverride.lowestState() {
-   return ATM128_POWER_IDLE;
+   #if defined(POWERTOSSIMZ)
+     return ATM128_POWER_DOWN;
+   #elif
+     return ATM128_POWER_IDLE;
+   #endif
  }
 
 }

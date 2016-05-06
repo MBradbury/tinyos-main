@@ -1,4 +1,4 @@
-// $Id: TossimPacketModelC.nc,v 1.12 2010-06-29 22:07:51 scipio Exp $
+// $Id: TossimPacketModelC.nc,v 1.1 2014/11/26 19:31:45 carbajor Exp $
 /*
  * Copyright (c) 2005 Stanford University. All rights reserved.
  *
@@ -65,6 +65,11 @@ module TossimPacketModelC {
     interface TossimPacketModel as Packet;
   }
   uses interface GainRadioModel;
+  #if defined(POWERTOSSIMZ)
+    uses interface PacketEnergyEstimator as Energy;
+    uses interface AMPacket;
+  #endif
+  
 }
 implementation {
   bool initialized = FALSE;
@@ -110,6 +115,11 @@ implementation {
     }
     dbg("TossimPacketModelC", "TossimPacketModelC: Control.start() called.\n");
     post startDoneTask();
+	
+	#if defined(POWERTOSSIMZ)
+       call Energy.poweron_start(); 
+	#endif
+  
     return SUCCESS;
   }
   command error_t Control.stop() {
@@ -119,7 +129,12 @@ implementation {
     }
     running = FALSE;
     dbg("TossimPacketModelC", "TossimPacketModelC: Control.stop() called.\n");
-    post stopDoneTask();
+  
+	#if defined(POWERTOSSIMZ)  
+	  call Energy.poweroff_start();
+	#endif
+  
+	post stopDoneTask();
     return SUCCESS;
   }
 
@@ -149,7 +164,12 @@ implementation {
     meta->strength = 0;
     meta->time = 0;
     sending = FALSE;
-    signal Packet.sendDone(msg, running? SUCCESS:EOFF);
+	
+	#if defined(POWERTOSSIMZ)	  
+	  //call Energy.send_done(destNode, sendingLength, SUCCESS);
+	#endif
+	
+	signal Packet.sendDone(msg, running? SUCCESS:EOFF);
   }
 
   command error_t Packet.cancel(message_t* msg) {
@@ -169,7 +189,10 @@ implementation {
 
     }
     if (sending != NULL) {
-      return EBUSY;
+	  #if defined(POWERTOSSIMZ)	  
+  	    dbg("ENERGY_DEBUG", "Attempting to send a message while sending another one...\n");
+	  #endif
+	  return EBUSY;
     }
     sendingLength = len; 
     sending = msg;
@@ -177,6 +200,11 @@ implementation {
     backoffCount = 0;
     neededFreeSamples = sim_csma_min_free_samples();
     start_csma();
+	
+	#if defined(POWERTOSSIMZ)	  
+	  dbg("ENERGY_DEBUG", "After CSMA time is %lld", sim_time()); 
+	#endif	  
+	
     return SUCCESS;
   }
 
@@ -242,7 +270,12 @@ implementation {
       message_t* rval = sending;
       sending = NULL;
       dbg("TossimPacketModelC", "PACKET: Failed to send packet due to busy channel.\n");
-      signal Packet.sendDone(rval, EBUSY);
+	  
+	  #if defined(POWERTOSSIMZ)	
+	  call Energy.send_busy(destNode, sendingLength, EBUSY); 
+	  #endif
+      
+	  signal Packet.sendDone(rval, EBUSY);
     }
   }
 
@@ -267,12 +300,21 @@ implementation {
     evt->handle = send_transmit_done;
 
     dbg("TossimPacketModelC", "PACKET: Broadcasting packet to everyone.\n");
+	
+	#if defined(POWERTOSSIMZ)	
+	  call Energy.send_start(destNode, sendingLength, metadata->strength); 
+	#endif	
+	
     call GainRadioModel.putOnAirTo(destNode, sending, metadata->ack, evt->time, 0.0, 0.0);
     metadata->ack = 0;
 
     evt->time += (sim_csma_rxtx_delay() *  (sim_ticks_per_sec() / sim_csma_symbols_per_sec()));
 
     dbg("TossimPacketModelC", "PACKET: Send done at %llu.\n", evt->time);
+	
+	#if defined(POWERTOSSIMZ)	
+	  call Energy.send_done(destNode, sendingLength, duration);
+	#endif
 	
     sim_queue_insert(evt);
   }
@@ -282,12 +324,18 @@ implementation {
     sending = NULL;
     transmitting = FALSE;
     dbg("TossimPacketModelC", "PACKET: Signaling send done at %llu.\n", sim_time());
+	#if defined(POWERTOSSIMZ)	
+	  //call Energy.send_done(destNode, sendingLength, SUCCESS);
+	#endif	
     signal Packet.sendDone(rval, running? SUCCESS:EOFF);
   }
-
+ 
   event void GainRadioModel.receive(message_t* msg) {
     if (running && !transmitting) {
-      signal Packet.receive(msg);
+	  #if defined(POWERTOSSIMZ)	
+	    call Energy.recv_done(call AMPacket.destination(msg));
+      #endif
+	  signal Packet.receive(msg);
     }
   }
 
@@ -298,8 +346,8 @@ implementation {
       tossim_metadata_t* metadata = getMetadata(sending);
       metadata->ack = 1;
       if (msg != sending) {
-        error = 1;
-        dbg("TossimPacketModelC", "Requested ack for 0x%x, but outgoing packet is 0x%x.\n", msg, sending);
+	error = 1;
+	dbg("TossimPacketModelC", "Requested ack for 0x%x, but outgoing packet is 0x%x.\n", msg, sending);
       }
     }
   }
@@ -311,14 +359,6 @@ implementation {
     else {
       return FALSE;
     }
-  }
-
-  default event void Control.startDone(error_t err) {
-    return;
-  }
- 
-  default event void Control.stopDone(error_t err) {
-    return;
   }
 }
 

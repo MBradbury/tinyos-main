@@ -63,7 +63,7 @@ BUILD_DEPS = sim-exe
 # lib/tossim has to come at the end in order to ensure basic TOSSIM
 # implementations are the last resort, so put it directly in the call
 
-sim-exe: builddir $(BUILD_EXTRA_DEPS) FORCE
+sim-exe: builddir build_storage $(BUILD_EXTRA_DEPS) FORCE
 	@echo "  placing object files in $(BUILDDIR)"
 	@echo "  writing XML schema to $(XML)"
 	@echo "  compiling $(COMPONENT) to object file sim.o"

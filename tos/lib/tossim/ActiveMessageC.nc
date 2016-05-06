@@ -1,4 +1,4 @@
-// $Id: ActiveMessageC.nc,v 1.7 2010-06-29 22:07:51 scipio Exp $
+// $Id: ActiveMessageC.nc,v 1.1 2014/11/26 19:31:45 carbajor Exp $
 /*
  * Copyright (c) 2005 Stanford University. All rights reserved.
  *
@@ -75,5 +75,11 @@ implementation {
   AM.amAddress -> Address;
   
   Network.GainRadioModel -> Model;
+  
+  #if defined(POWERTOSSIMZ)
+    components PacketEnergyEstimatorP;
+    Network.Energy -> PacketEnergyEstimatorP;
+    Network.AMPacket -> AM;
+  #endif
 }
 
