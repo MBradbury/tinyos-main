@@ -48,12 +48,12 @@ implementation {
 
   async command void Energy.poweron_start()
   {
-	dbg("ENERGY_HANDLER","%lld,RADIO_STATE,ON\n", sim_time());
+	simdbg("ENERGY_HANDLER","%lld,RADIO_STATE,ON\n", sim_time());
   }
 
   async command void Energy.poweroff_start()
   {
-	dbg("ENERGY_HANDLER", "%lld,RADIO_STATE,OFF\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,RADIO_STATE,OFF\n", sim_time());
   }
 
   /*
@@ -65,17 +65,17 @@ implementation {
 
   async command void Energy.send_done(int dest, uint8_t len,sim_time_t state)
   {
-	dbg("ENERGY_HANDLER", "%lld,RADIO_STATE,SEND_MESSAGE,OFF,DEST:%d,SIZE:%d\n", state + sim_time(), dest, len);
+	simdbg("ENERGY_HANDLER", "%lld,RADIO_STATE,SEND_MESSAGE,OFF,DEST:%d,SIZE:%d\n", state + sim_time(), dest, len);
   }
 
   async command void Energy.send_busy(int dest, uint8_t len, int state) 
   {
-	dbg("ENERGY_HANDLER", "%lld,RADIO_STATE,SEND_MESSAGE,ERROR,BUSY,DEST:%d,SIZE:%d\n",sim_time(),dest,len);
+	simdbg("ENERGY_HANDLER", "%lld,RADIO_STATE,SEND_MESSAGE,ERROR,BUSY,DEST:%d,SIZE:%d\n",sim_time(),dest,len);
   }
 
   async command void Energy.send_start(int dest, uint8_t len, int dbpower)
   {
-	dbg("ENERGY_HANDLER", "%lld,RADIO_STATE,SEND_MESSAGE,ON,DEST:%d,SIZE:%d,DB:%d\n", sim_time(),dest, len, dbpower);
+	simdbg("ENERGY_HANDLER", "%lld,RADIO_STATE,SEND_MESSAGE,ON,DEST:%d,SIZE:%d,DB:%d\n", sim_time(),dest, len, dbpower);
   }
 
 
@@ -86,8 +86,8 @@ implementation {
 
   async command void Energy.recv_done(int tome)
   {
-	if ( sim_node() == tome || tome == 65535 )
-		dbg("ENERGY_HANDLER", "%lld,RADIO_STATE,RECV_MESSAGE,DONE,DEST:%d\n",sim_time(),tome);
+	if ( sim_node() == (unsigned long)tome || tome == 65535 )
+		simdbg("ENERGY_HANDLER", "%lld,RADIO_STATE,RECV_MESSAGE,DONE,DEST:%d\n",sim_time(),tome);
   }
 }
 

@@ -60,73 +60,73 @@ implementation {
   
   async command void At45dbSimEnergyEstimator.read_start(uint16_t bytes) 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,READ,START\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,READ,START\n", sim_time());
 	currentNumBytes = bytes;
   }
 
 
   async command void At45dbSimEnergyEstimator.write_start(uint16_t bytes) 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,WRITE,START\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,WRITE,START\n", sim_time());
 	currentNumBytes = bytes;
   }
 
 
   async command void At45dbSimEnergyEstimator.crc_start(uint16_t bytes) 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,CRC,START\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,CRC,START\n", sim_time());
 	currentNumBytes = bytes;
   }
 
 
   async command void At45dbSimEnergyEstimator.flush_start() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,FLUSH,START\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,FLUSH,START\n", sim_time());
   }
   
   async command void At45dbSimEnergyEstimator.sync_start() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,SYNC,START\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,SYNC,START\n", sim_time());
   }
 
 
   async command void At45dbSimEnergyEstimator.erase_start() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,ERASE,START\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,ERASE,START\n", sim_time());
   }
 
 
   async command void At45dbSimEnergyEstimator.read_done() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,READ,STOP\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,READ,STOP\n", sim_time());
   }
 
 
   async command void At45dbSimEnergyEstimator.write_done() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,WRITE,STOP\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,WRITE,STOP\n", sim_time());
   }
 
 
   async command void At45dbSimEnergyEstimator.crc_done() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,CRC,STOP\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,CRC,STOP\n", sim_time());
   }
 
 
   async command void At45dbSimEnergyEstimator.flush_done() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,FLUSH,STOP\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,FLUSH,STOP\n", sim_time());
   }
 
   async command void At45dbSimEnergyEstimator.sync_done() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,SYNC,STOP\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,SYNC,STOP\n", sim_time());
   }
   
   async command void At45dbSimEnergyEstimator.erase_done() 
   {
-	dbg("ENERGY_HANDLER", "%lld,EEPROM,ERASE,STOP\n", sim_time());
+	simdbg("ENERGY_HANDLER", "%lld,EEPROM,ERASE,STOP\n", sim_time());
   }
 
 
