@@ -42,8 +42,11 @@
 
 #include <sim_tossim.h>
 #include <sim_event_queue.h>
+#include <sim_gain.h>
 #include <sim_mote.h>
 #include <sim_log.h>
+#include <randomlib.h>
+
 #include <stdlib.h>
 #include <sys/time.h>
 
@@ -80,6 +83,7 @@ void sim_init(void) __attribute__ ((C, spontaneous)) {
 }
 
 void sim_end(void) __attribute__ ((C, spontaneous)) {
+  sim_gain_free();
   sim_noise_free();
   sim_log_free();
   sim_queue_free();
@@ -109,6 +113,9 @@ void sim_random_seed(int seed) __attribute__ ((C, spontaneous)) {
     seed = 1;
   }
   sim_seed = seed;
+
+  // Make sure to reset the other random number generator
+  RandomReset();
 }
 
 sim_time_t sim_time(void) __attribute__ ((C, spontaneous)) {
@@ -140,10 +147,10 @@ bool sim_run_next_event(void) __attribute__ ((C, spontaneous)) {
     sim_log_reset_flag();
 
     // Need to test whether function pointers are for statically
-    // allocted events that are zeroed out on reboot
-    dbg("Tossim", "CORE: popping event 0x%p for %ul at %llu with handler %p...\n",
+    // allocated events that are zeroed out on reboot
+    dbg("Tossim", "CORE: popping event 0x%p for %lu at %llu with handler %p...\n",
       event, sim_node(), sim_time(), event->handle);
-    if ((sim_mote_is_on(event->mote) || event->force) && event->handle != NULL) {
+    if ((event->force || sim_mote_is_on(event->mote)) && event->handle != NULL) {
       result = TRUE;
       //dbg_clear("Tossim", " mote is on (or forced event), run it.\n");
       event->handle(event);
@@ -201,8 +208,12 @@ bool sim_remove_channel(const char* channel, FILE* file) __attribute__ ((C, spon
   return sim_log_remove_channel(channel, file);
 }
 
+void sim_add_callback(const char* channel, void (*handle)(void* data, const char* line, size_t line_length), void* data) __attribute__ ((C, spontaneous)) {
+  sim_log_add_callback(channel, handle, data);
+}
+
 void sim_register_event(sim_time_t execution_time, void (*handle)(void*), void* data) __attribute__ ((C, spontaneous)) {
-  sim_event_t* event = sim_queue_allocate_event();
+  sim_event_t* const event = sim_queue_allocate_event();
 
   event->time = execution_time;
 
@@ -210,6 +221,7 @@ void sim_register_event(sim_time_t execution_time, void (*handle)(void*), void* 
   event->cleanup = &sim_queue_cleanup_event;
 
   event->force = 1; // Make sure the event occurs even if the mote is off
+  event->cancelled = 0;
 
   event->data = data;
 

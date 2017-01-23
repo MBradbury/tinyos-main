@@ -42,9 +42,16 @@
 
 %module TOSSIM
 
+%include <std_shared_ptr.i>
+%shared_ptr(MAC)
+%shared_ptr(Radio)
+%shared_ptr(Packet)
+%shared_ptr(Variable)
+
 %{
 #include <memory.h>
 #include <tossim.h>
+#include <sim_noise.h>
 
 #include <functional>
 
@@ -126,74 +133,106 @@ class PyCallback
 {
 private:
     PyObject *func;
+private:
     PyCallback& operator=(const PyCallback&) = delete; // Not allowed
 public:
-    PyCallback(PyCallback&& o) : func(o.func) {
+    PyCallback(PyCallback&& o) noexcept : func(o.func)
+    {
         o.func = NULL;
     }
-    PyCallback(const PyCallback& o) : func(o.func) {
+    PyCallback(const PyCallback& o) noexcept : func(o.func)
+    {
         Py_XINCREF(func);
     }
-    PyCallback(PyObject *pfunc) {
+    PyCallback(PyObject *pfunc) : func(pfunc)
+    {
         if (!pfunc || Py_None == pfunc || !PyCallable_Check(pfunc))
         {
             PyErr_SetString(PyExc_TypeError, "Requires a callable as a parameter.");
             throw std::runtime_error("Python exception occurred");
         }
-        func = pfunc;
         Py_INCREF(func);
     }
-    ~PyCallback() {
+    ~PyCallback() noexcept
+    {
         Py_XDECREF(func);
     }
 
     bool operator()() const {
-        PyObject *args = PyTuple_New(0);
+        PyObject *result = PyObject_CallObject(func, NULL);
 
-        PyObject *result = PyObject_Call(func, args, NULL);
+        if (result != NULL)
+        {
+            const bool bool_result = PyObject_IsTrue(result);
 
-        bool bool_result = result != NULL && PyObject_IsTrue(result);
+            Py_DECREF(result);
 
-        Py_DECREF(args);
-        Py_XDECREF(result);
-
-        if (PyErr_Occurred() != NULL)
+            return bool_result;
+        }
+        else
         {
             throw std::runtime_error("Python exception occurred");
         }
-
-        return bool_result;
     }
 
-    bool operator()(double t) const {
+    void operator()(double t) const {
         PyObject *args = PyTuple_New(1);
         PyTuple_SetItem(args, 0, PyFloat_FromDouble(t));
 
         PyObject *result = PyObject_CallObject(func, args);
 
-        bool bool_result = result != NULL && PyObject_IsTrue(result);
-
         Py_DECREF(args);
-        Py_XDECREF(result);
 
-        if (PyErr_Occurred() != NULL)
+        if (result != NULL)
+        {
+            Py_DECREF(result);
+        }
+        else
         {
             throw std::runtime_error("Python exception occurred");
         }
-
-        return bool_result;
     }
 
-    void operator()(unsigned int i) const {
+    void operator()(long long int i) const {
         PyObject *args = PyTuple_New(1);
-        PyTuple_SetItem(args, 0, PyLong_FromUnsignedLong(i));
+        PyTuple_SetItem(args, 0, PyLong_FromLongLong(i));
 
         PyObject *result = PyObject_CallObject(func, args);
 
         Py_DECREF(args);
-        Py_XDECREF(result);
 
-        if (PyErr_Occurred() != NULL)
+        if (result != NULL)
+        {
+            Py_DECREF(result);
+        }
+        else
+        {
+            throw std::runtime_error("Python exception occurred");
+        }
+    }
+
+    void operator()(const char* str, size_t length) const {
+#if PY_VERSION_HEX < 0x03000000
+        PyObject *pystring = PyString_FromStringAndSize(str, length);
+#else
+        PyObject *pystring = PyUnicode_FromStringAndSize(str, length);
+#endif
+        if (pystring == NULL) {
+            throw std::runtime_error("Bad string");
+        }
+
+        PyObject *args = PyTuple_New(1);
+        PyTuple_SetItem(args, 0, pystring);
+
+        PyObject *result = PyObject_CallObject(func, args);
+
+        Py_DECREF(args);
+
+        if (result != NULL)
+        {
+            Py_DECREF(result);
+        }
+        else
         {
             throw std::runtime_error("Python exception occurred");
         }
@@ -263,42 +302,45 @@ FILE* object_to_file(PyObject* o)
 }
 
 %{
-// TODO: Fix the memory leak introduced here  by strdup
-bool fill_nesc_app(nesc_app_t* app, int i, PyObject* name, PyObject* array, PyObject* format)
+bool fill_nesc_app(NescApp* app, int i, PyObject* name, PyObject* array, PyObject* format)
 {
 #if PY_VERSION_HEX < 0x03000000
-    if (PyString_Check(name) && PyString_Check(format)) {
-        app->variableNames[i] = strdup(PyString_AsString(name));
-        app->variableTypes[i] = strdup(PyString_AsString(format));
+    if (PyString_Check(name) && PyString_Check(format) && PyString_Check(array)) {
+        app->variableNames[i] = PyString_AsString(name);
+        app->variableTypes[i] = PyString_AsString(format);
         app->variableArray[i] = (strcmp(PyString_AsString(array), "array") == 0);
 
         return true;
     }
     else {
-        free(app->variableNames);
-        free(app->variableTypes);
-        free(app->variableArray);
-        free(app);
         PyErr_SetString(PyExc_RuntimeError, "bad string");
         return false;
     }
 #else
-    if (PyUnicode_Check(name) && PyUnicode_Check(format)) {
+    if (PyUnicode_Check(name) && PyUnicode_Check(format) && PyUnicode_Check(array)) {
 
         PyObject* name_ascii = PyUnicode_AsASCIIString(name);
         PyObject* format_ascii = PyUnicode_AsASCIIString(format);
+        PyObject* array_ascii = PyUnicode_AsASCIIString(array);
 
-        app->variableNames[i] = strdup(PyBytes_AsString(name_ascii));
-        app->variableTypes[i] = strdup(PyBytes_AsString(format_ascii));
+        if (name_ascii == NULL || format_ascii == NULL || array_ascii == NULL)
+        {
+            Py_XDECREF(name_ascii);
+            Py_XDECREF(format_ascii);
+            Py_XDECREF(array_ascii);
+
+            PyErr_SetString(PyExc_RuntimeError, "bad string not ascii");
+            return false;
+        }
+
+        app->variableNames[i] = PyBytes_AsString(name_ascii);
+        app->variableTypes[i] = PyBytes_AsString(format_ascii);
+        app->variableArray[i] = (strcmp(PyBytes_AsString(array_ascii), "array") == 0);
 
         Py_DECREF(name_ascii);
         Py_DECREF(format_ascii);
-
-        PyObject* array_ascii = PyUnicode_AsASCIIString(array);
-        
-        app->variableArray[i] = (strcmp(PyBytes_AsString(array_ascii), "array") == 0);
-
         Py_DECREF(array_ascii);
+        
         return true;
     }
     else {
@@ -310,47 +352,39 @@ bool fill_nesc_app(nesc_app_t* app, int i, PyObject* name, PyObject* array, PyOb
 
 %}
 
-%typemap(in) nesc_app_t* {
+%typemap(in) NescApp {
     if (!PyList_Check($input)) {
         PyErr_SetString(PyExc_TypeError, "Requires a list as a parameter.");
-        return NULL;
+        SWIG_fail;
     }
     else {
         Py_ssize_t size = PyList_Size($input);
-        unsigned int i = 0;
-        nesc_app_t* app;
+        Py_ssize_t i = 0;
 
         if (size < 0 || size % 3 != 0) {
-            PyErr_SetString(PyExc_RuntimeError, "List must have 2*N elements.");
-            return NULL;
+            PyErr_SetString(PyExc_RuntimeError, "List must have 3*N elements.");
+            SWIG_fail;
         }
 
-        app = (nesc_app_t*)malloc(sizeof(nesc_app_t));
+        NescApp app(static_cast<unsigned int>(size) / 3);
 
-        app->numVariables = static_cast<unsigned int>(size) / 3;
-        app->variableNames = (const char**)malloc(app->numVariables * sizeof(char*));
-        app->variableTypes = (const char**)malloc(app->numVariables * sizeof(char*));
-        app->variableArray = (bool*)malloc(app->numVariables * sizeof(bool));
-
-        for (i = 0; i < app->numVariables; i++) {
-            PyObject* name = PyList_GetItem($input, 3 * i);
-            PyObject* array = PyList_GetItem($input, (3 * i) + 1);
-            PyObject* format = PyList_GetItem($input, (3 * i) + 2);
-            if (!fill_nesc_app(app, i, name, array, format))
+        for (i = 0; i < app.numVariables; i++) {
+            PyObject* name = PyList_GET_ITEM($input, 3 * i);
+            PyObject* array = PyList_GET_ITEM($input, (3 * i) + 1);
+            PyObject* format = PyList_GET_ITEM($input, (3 * i) + 2);
+            if (!fill_nesc_app(&app, i, name, array, format))
             {
-                free(app->variableNames);
-                free(app->variableTypes);
-                free(app->variableArray);
-                free(app);
-                return NULL;
+                SWIG_fail;
             }
         }
 
-        $1 = app;
+        $1 = std::move(app);
     }
 }
 #endif
 
+%ignore variable_string;
+%ignore variable_string_t;
 typedef struct variable_string {
     const char* type;
     void* ptr;
@@ -358,12 +392,22 @@ typedef struct variable_string {
     bool isArray;
 } variable_string_t;
 
-typedef struct nesc_app {
+%ignore NescApp;
+class NescApp {
+public:
+    NescApp(unsigned int size)
+        : numVariables(size)
+        , variableNames(size)
+        , variableTypes(size)
+        , variableArray(size)
+    {
+    }
+
     unsigned int numVariables;
-    const char** variableNames;
-    const char** variableTypes;
-    bool* variableArray;
-} nesc_app_t;
+    std::vector<std::string> variableNames;
+    std::vector<std::string> variableTypes;
+    std::vector<bool> variableArray;
+};
 
 class Variable {
  public:
@@ -373,15 +417,18 @@ class Variable {
 };
 
 class Mote {
- public:
-    Mote(nesc_app_t* app);
+ protected:
+    Mote(const NescApp* app);
     ~Mote();
 
-    unsigned long id();
-    
-    long long int euid();
-    void setEuid(long long int id);
+ public:
+    unsigned long id() const noexcept;
+  
+    long long int euid() const noexcept;
+    void setEuid(long long int id) noexcept;
 
+    long long int tag() const noexcept;
+    void setTag(long long int tag) noexcept;
     
     long long int bootTime() const noexcept;
     void bootAtTime(long long int time);
@@ -389,18 +436,61 @@ class Mote {
     bool isOn();
     void turnOff();
     void turnOn();
-    Variable* getVariable(char* name);
+    std::shared_ptr<Variable> getVariable(const char* name_cstr);
 
+    void reserveNoiseTraces(size_t num_traces);
     void addNoiseTraceReading(int val);
     void createNoiseModel();
     int generateNoise(int when);
+
+    %extend {
+        PyObject* addNoiseTraces(PyObject *traces)
+        {
+            if (!PyList_Check(traces)) {
+                PyErr_SetString(PyExc_TypeError, "Requires a list as a parameter.");
+                return NULL;
+            }
+
+            Py_ssize_t size = PyList_GET_SIZE(traces);
+
+            $self->reserveNoiseTraces(size);
+
+            for (Py_ssize_t i = 0; i != size; ++i)
+            {
+                PyObject* trace = PyList_GET_ITEM(traces, i);
+
+                long trace_int;
+
+                if (PyLong_Check(trace)) {
+                    trace_int = PyLong_AsLong(trace);
+                }
+                else if (PyInt_Check(trace)) {
+                    trace_int = PyInt_AsLong(trace);
+                }
+                else {
+                    PyErr_SetString(PyExc_TypeError, "Requires a list of ints as a parameter.");
+                    return NULL;
+                }
+
+                if (trace_int < NOISE_MIN || trace_int > NOISE_MAX) {
+                    PyErr_Format(PyExc_ValueError, "Noise needs to be in valid range [%d, %d] but was %ld.",
+                        NOISE_MIN, NOISE_MAX, trace_int);
+                    return NULL;
+                }
+
+                $self->addNoiseTraceReading(trace_int);
+            }
+
+            Py_RETURN_NONE;
+        }
+    }
 };
 
 %extend Tossim {
-    PyObject* register_event_callback(PyObject *callback, double time) {
+    PyObject* addCallback(const char* channel, PyObject *callback) {
         try
         {
-            $self->register_event_callback(PyCallback(callback), time);
+            $self->addCallback(channel, PyCallback(callback));
             Py_RETURN_NONE;
         }
         catch (std::runtime_error ex)
@@ -409,11 +499,11 @@ class Mote {
         }
     }
 
-    PyObject* runAllEvents(PyObject *continue_events, PyObject *callback) {
+    PyObject* register_event_callback(PyObject *callback, double current_time) {
         try
         {
-            unsigned int result = $self->runAllEvents(PyCallback(continue_events), PyCallback(callback));
-            return PyLong_FromUnsignedLong(result);
+            $self->register_event_callback(PyCallback(callback), current_time);
+            Py_RETURN_NONE;
         }
         catch (std::runtime_error ex)
         {
@@ -421,11 +511,34 @@ class Mote {
         }
     }
 
-    PyObject* runAllEventsWithMaxTime(double end_time, PyObject *continue_events, PyObject *callback) {
+    PyObject* runAllEventsWithTriggeredMaxTime(
+        double duration,
+        double duration_upper_bound,
+        PyObject *continue_events)
+    {
         try
         {
-            unsigned int result = $self->runAllEventsWithMaxTime(end_time, PyCallback(continue_events), PyCallback(callback));
-            return PyLong_FromUnsignedLong(result);
+            long long int result = $self->runAllEventsWithTriggeredMaxTime(
+                duration, duration_upper_bound, PyCallback(continue_events));
+            return PyLong_FromLongLong(result);
+        }
+        catch (std::runtime_error ex)
+        {
+            return NULL;
+        }
+    }
+
+    PyObject* runAllEventsWithTriggeredMaxTimeAndCallback(
+        double duration,
+        double duration_upper_bound,
+        PyObject *continue_events,
+        PyObject *callback)
+    {
+        try
+        {
+            long long int result = $self->runAllEventsWithTriggeredMaxTimeAndCallback(
+                duration, duration_upper_bound, PyCallback(continue_events), PyCallback(callback));
+            return PyLong_FromLongLong(result);
         }
         catch (std::runtime_error ex)
         {
@@ -436,7 +549,7 @@ class Mote {
 
 class Tossim {
  public:
-    Tossim(nesc_app_t* app);
+    Tossim(NescApp app);
     ~Tossim();
     
     void init();
@@ -453,30 +566,27 @@ class Tossim {
 
     void addChannel(const char* channel, FILE* file);
     bool removeChannel(const char* channel, FILE* file);
+    void addCallback(const char* channel, std::function<void(const char*, size_t)> callback);
+
     void randomSeed(int seed);
 
-    void register_event_callback(std::function<bool(double)> callback, double time);
+    void register_event_callback(std::function<bool(double)> callback, double current_time);
 
     bool runNextEvent();
-    unsigned int runAllEvents(std::function<bool(double)> continue_events, std::function<void (unsigned int)> callback);
-    unsigned int runAllEventsWithMaxTime(double end_time, std::function<bool()> continue_events, std::function<void (unsigned int)> callback);
 
-    MAC* mac();
-    Radio* radio();
-    Packet* newPacket();
-};
+    void triggerRunDurationStart();
 
-class JavaRandom
-{
-public:
-  JavaRandom(long long int seed) noexcept;
-  ~JavaRandom() = default;
+    long long int runAllEventsWithTriggeredMaxTime(
+        double duration,
+        double duration_upper_bound,
+        std::function<bool()> continue_events);
+    long long int runAllEventsWithTriggeredMaxTimeAndCallback(
+        double duration,
+        double duration_upper_bound,
+        std::function<bool()> continue_events,
+        std::function<void(long long int)> callback);
 
-  void setSeed(long long int seed) noexcept;
-  long long int getSeed() const noexcept;
-
-  long long int next(int bits) noexcept;
-
-  double nextDouble() noexcept;
-  double nextGaussian() noexcept;
+    std::shared_ptr<MAC> mac();
+    std::shared_ptr<Radio> radio();
+    std::shared_ptr<Packet> newPacket();
 };

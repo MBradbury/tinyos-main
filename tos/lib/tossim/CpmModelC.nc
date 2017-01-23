@@ -57,9 +57,10 @@ implementation {
   
   message_t* outgoing; // If I'm sending, this is my outgoing packet
   bool requestAck;
-  bool receiving = 0;  // Whether or not I think I'm receiving a packet
-  bool transmitting = 0; // Whether or not I think I'm transmitting a packet
+  bool receiving = FALSE;  // Whether or not I think I'm receiving a packet
+  bool transmitting = FALSE; // Whether or not I think I'm transmitting a packet
   sim_time_t transmissionEndTime; // to check pending transmission
+
   struct receive_message;
   typedef struct receive_message receive_message_t;
 
@@ -68,6 +69,7 @@ implementation {
     sim_time_t end;
     double power;
     double reversePower;
+    double pow10power_10; // cached pow(10.0, power / 10.0)
     int source;
     int8_t strength;
     bool lost;
@@ -83,76 +85,53 @@ implementation {
   sim_event_t* allocate_receive_event(sim_time_t t, receive_message_t* m);
 
   bool shouldReceive(double SNR);
-  bool checkReceive(receive_message_t* msg);
-  double packetNoise(receive_message_t* msg);
-  double checkPrr(receive_message_t* msg);
-  
-  double timeInMs()   {
-    sim_time_t ftime = sim_time();
-    int hours, minutes, seconds;
-    sim_time_t secondBillionths;
-    int temp_time;
-    double ms_time;
+  bool checkReceive(const receive_message_t* msg);
+  double packetNoise(const receive_message_t* msg);
+  double checkPrr(const receive_message_t* msg);
 
-    secondBillionths = (ftime % sim_ticks_per_sec());
-    if (sim_ticks_per_sec() > (sim_time_t)1000000000LL) {
-      secondBillionths /= (sim_ticks_per_sec() / (sim_time_t)1000000000LL);
-    }
-    else {
-      secondBillionths *= ((sim_time_t)1000000000LL / sim_ticks_per_sec());
-    }
-    temp_time = (int)(secondBillionths/10000);
-    
-    if (temp_time % 10 >= 5) {
-      temp_time += (10-(temp_time%10));
-    }
-    else {
-      temp_time -= (temp_time%10);
-    }
-    ms_time = (float)(temp_time/100.0);
+  sim_time_t timeInMs(void) {
+    const sim_time_t ticks_per_sec = sim_ticks_per_sec();
+    const sim_time_t ftime = sim_time();
 
-    seconds = (int)(ftime / sim_ticks_per_sec());
-    minutes = seconds / 60;
-    hours = minutes / 60;
-    seconds %= 60;
-    minutes %= 60;
-        
-    ms_time += (hours*3600+minutes*60+seconds)*1000;
+    sim_time_t ms_time = ftime / (ticks_per_sec / (1000ULL * 100));
+    const sim_time_t ms_time_mod100 = ms_time % 100;
+
+    // Forwarding old rounding a rounded number bug
+    if (ms_time_mod100 >= 45)
+    {
+      ms_time += (100 - ms_time_mod100);
+    }
+    else
+    {
+      ms_time -= ms_time_mod100;
+    }
+
+    ms_time /= 100;
 
     return ms_time;
   }
-        
+
   //Generate a CPM noise reading
-  double noise_hash_generation()   {
-    double CT = timeInMs(); 
-    uint32_t quotient = ((sim_time_t)(CT*10))/10;
-    uint8_t remain = (uint8_t)(((sim_time_t)(CT*10))%10);
+  double noise_hash_generation(void)   {
+    const sim_time_t CT = timeInMs();
+
+    const uint16_t node_id = sim_node();
     double noise_val;
-    uint16_t node_id = sim_node();
 
     dbg("CpmModelC", "IN: noise_hash_generation()\n");
-    if (5 <= remain && remain < 10) {
-      noise_val = (double)sim_noise_generate(node_id, quotient+1);
-    }
-    else {
-      noise_val = (double)sim_noise_generate(node_id, quotient);
-    }
+
+    noise_val = (double)sim_noise_generate(node_id, CT);
+
     dbg("CpmModelC,Tal", "%s: OUT: noise_hash_generation(): %lf\n", sim_time_string(), noise_val);
 
     return noise_val;
   }
-
-  double packetSnr(receive_message_t* msg) {
-    double signalStr = msg->power;
-    double noise = noise_hash_generation();
-    return (signalStr - noise);
-  }
   
   double arr_estimate_from_snr(double SNR) {
-    double beta1 = 0.9794;
-    double beta2 = 2.3851;
-    double X = SNR-beta2;
-    double PSE = 0.5*erfc(beta1*X/sqrt(2));
+    const double beta1 = 0.9794;
+    const double beta2 = 2.3851;
+    const double X = SNR-beta2;
+    const double PSE = 0.5*erfc(beta1*X/M_SQRT2);
     double prr_hat = pow(1-PSE, 23*2);
     dbg("CpmModelC,SNRLoss", "SNR is %lf, ARR is %lf\n", SNR, prr_hat);
     if (prr_hat > 1)
@@ -165,7 +144,7 @@ implementation {
   
   int shouldAckReceive(double snr) {
     double prr = arr_estimate_from_snr(snr);
-    double coin = RandomUniform();
+    const double coin = RandomUniform(); // TODO: PERFORMANCE: Move inside if
     if ( (prr >= 0) && (prr <= 1) ) {
       if (coin < prr)
         prr = 1.0;
@@ -175,7 +154,8 @@ implementation {
     return (int)prr;
   }
   
-  void sim_gain_ack_handle(sim_event_t* evt)  {
+  void sim_gain_ack_handle(sim_event_t* evt)
+  {
     // Four conditions must hold for an ack to be issued:
     // 1) Transmitter is still sending a packet (i.e., not cancelled)
     // 2) The packet requested an acknowledgment
@@ -183,24 +163,24 @@ implementation {
     // 4) The packet passes the SNR/ARR curve
     if (requestAck && // This 
         outgoing != NULL &&
-        sim_mote_is_on(sim_node())) {
-      receive_message_t* rcv = (receive_message_t*)evt->data;
-      double power = rcv->reversePower;
-      double noise = packetNoise(rcv);
-      double snr = power - noise;
-      if (shouldAckReceive(snr)) {
+        sim_mote_is_on(sim_node()))
+    {
+      const receive_message_t* rcv = (receive_message_t*)evt->data;
+      const double power = rcv->reversePower;
+      const double noise = packetNoise(rcv);
+      const double snr = power - noise;
+
+      if (shouldAckReceive(snr))
+      {
         signal Model.acked(outgoing);
       }
     }
+
     free_receive_message((receive_message_t*)evt->data);
   }
 
-  sim_event_t receiveEvent;
   // This clear threshold comes from the CC2420 data sheet
   double clearThreshold = -72.0;
-  bool collision = FALSE;
-  message_t* incoming = NULL;
-  int incomingSource;
 
   command void Model.setClearValue(double value) {
     clearThreshold = value;
@@ -208,12 +188,13 @@ implementation {
   }
   
   command bool Model.clearChannel() {
-    dbg("CpmModelC", "Checking clear channel @ %s: %f <= %f \n", sim_time_string(), (double)packetNoise(NULL), clearThreshold);
-    return packetNoise(NULL) < clearThreshold;
+    const double noise = packetNoise(NULL);
+    dbg("CpmModelC", "Checking clear channel @ %s: %f <= %f \n", sim_time_string(), noise, clearThreshold);
+    return noise < clearThreshold;
   }
 
   void sim_gain_schedule_ack(int source, sim_time_t t, receive_message_t* r) {
-    sim_event_t* ackEvent = sim_queue_allocate_raw_event();
+    sim_event_t* const ackEvent = sim_queue_allocate_raw_event();
     
     ackEvent->mote = source;
     ackEvent->force = 1;
@@ -230,10 +211,10 @@ implementation {
     // Based on CC2420 measurement by Kannan.
     // The updated function below fixes the problem of non-zero PRR
     // at very low SNR. With this function PRR is 0 for SNR <= 3.
-    double beta1 = 0.9794;
-    double beta2 = 2.3851;
-    double X = SNR-beta2;
-    double PSE = 0.5*erfc(beta1*X/sqrt(2));
+    const double beta1 = 0.9794;
+    const double beta2 = 2.3851;
+    const double X = SNR-beta2;
+    const double PSE = 0.5*erfc(beta1*X/M_SQRT2);
     double prr_hat = pow(1-PSE, 23*2);
     dbg("CpmModelC,SNR", "SNR is %lf, PRR is %lf\n", SNR, prr_hat);
     if (prr_hat > 1)
@@ -246,7 +227,7 @@ implementation {
 
   bool shouldReceive(double SNR) {
     double prr = prr_estimate_from_snr(SNR);
-    double coin = RandomUniform();
+    const double coin = RandomUniform(); // TODO: PERFORMANCE: Move inside if
     if ( (prr >= 0) && (prr <= 1) ) {
       if (coin < prr)
         prr = 1.0;
@@ -256,54 +237,53 @@ implementation {
     return prr;
   }
 
-  bool checkReceive(receive_message_t* msg) {
+  bool checkReceive(const receive_message_t* msg) {
     double noise = noise_hash_generation();
-    receive_message_t* list = outstandingReceptionHead;
+    const receive_message_t* list;
     noise = pow(10.0, noise / 10.0);
-    while (list != NULL) {
+    for (list = outstandingReceptionHead; list != NULL; list = list->next) {
       if (list != msg) {
-        noise += pow(10.0, list->power / 10.0);
+        noise += list->pow10power_10;
       }
-      list = list->next;
     }
     noise = 10.0 * log10(noise);
     return shouldReceive(msg->power - noise);
   }
   
-  double packetNoise(receive_message_t* msg) {
+  double packetNoise(const receive_message_t* msg) {
     double noise = noise_hash_generation();
-    receive_message_t* list = outstandingReceptionHead;
+    const receive_message_t* list;
     noise = pow(10.0, noise / 10.0);
-    while (list != NULL) {
+    for (list = outstandingReceptionHead; list != NULL; list = list->next) {
       if (list != msg) {
-        noise += pow(10.0, list->power / 10.0);
+        noise += list->pow10power_10;
       }
-      list = list->next;
     }
     noise = 10.0 * log10(noise);
     return noise;
   }
 
-  double checkPrr(receive_message_t* msg) {
+  /*double checkPrr(const receive_message_t* msg) {
     return prr_estimate_from_snr(msg->power / packetNoise(msg));
-  }
+  }*/
   
 
   /* Handle a packet reception. If the packet is being acked,
      pass the corresponding receive_message_t* to the ack handler,
      otherwise free it. */
   void sim_gain_receive_handle(sim_event_t* evt) {
-    receive_message_t* mine = (receive_message_t*)evt->data;
+    receive_message_t* const mine = (receive_message_t*)evt->data;
     receive_message_t* predecessor = NULL;
-    receive_message_t* list = outstandingReceptionHead;
+    receive_message_t* list;
 
     dbg("CpmModelC", "Handling reception event @ %s.\n", sim_time_string());
-    while (list != NULL) {
+    for (list = outstandingReceptionHead; list != NULL; list = list->next) {
       if (list->next == mine) {
         predecessor = list;
+        break;
       }
-      list = list->next;
     }
+
     if (predecessor) {
       predecessor->next = mine->next;
     }
@@ -313,6 +293,7 @@ implementation {
     else {
       dbgerror("CpmModelC", "Incoming packet list structure is corrupted: entry is not the head and no entry points to it.\n");
     }
+
     dbg("CpmModelC,SNRLoss", "Packet from %i to %i\n", (int)mine->source, (int)sim_node());
     if (!checkReceive(mine)) {
       dbg("CpmModelC,SNRLoss", " - lost packet from %i as SNR was too low.\n", (int)mine->source);
@@ -322,16 +303,16 @@ implementation {
       // Copy this receiver's packet signal strength to the metadata region
       // of the packet. Note that this packet is actually shared across all
       // receivers: a higher layer performs the copy.
-      tossim_metadata_t* meta = (tossim_metadata_t*)(&mine->msg->metadata);
+      tossim_metadata_t* const meta = (tossim_metadata_t*)&mine->msg->metadata;
       meta->strength = mine->strength;
       
-      dbg_clear("CpmModelC,SNRLoss", "  -signaling reception\n");
+      dbg_clear("CpmModelC,SNRLoss", "  -signalling reception\n");
       signal Model.receive(mine->msg);
       if (mine->ack) {
-        dbg_clear("CpmModelC", " acknowledgment requested, ");
+        dbg_clear("CpmModelC", " acknowledgement requested, ");
       }
       else {
-        dbg_clear("CpmModelC", " no acknowledgment requested.\n");
+        dbg_clear("CpmModelC", " no acknowledgement requested.\n");
       }
       // If we scheduled an ack, receiving = 0 when it completes
       if (mine->ack && signal Model.shouldAck(mine->msg)) {
@@ -368,18 +349,19 @@ implementation {
   void enqueue_receive_event(int source, sim_time_t endTime, message_t* msg, bool receive, double power, double reversePower) {
     sim_event_t* evt;
     receive_message_t* list;
-    receive_message_t* rcv = allocate_receive_message();
-    double noiseStr = packetNoise(rcv);
+    receive_message_t* const rcv = allocate_receive_message();
+    const double noiseStr = packetNoise(rcv);
     rcv->source = source;
     rcv->start = sim_time();
     rcv->end = endTime;
     rcv->power = power;
     rcv->reversePower = reversePower;
+    rcv->pow10power_10 = pow(10.0, power / 10.0);
     // The strength of a packet is the sum of the signal and noise. In most cases, this means
     // the signal. By sampling this here, it assumes that the packet RSSI is sampled at
     // the beginning of the packet. This is true for the CC2420, but is not true for all
     // radios. But generalizing seems like complexity for minimal gain at this point.
-    rcv->strength = (int8_t)floor(10.0 * log10(pow(10.0, power/10.0) + pow(10.0, noiseStr/10.0)));
+    rcv->strength = (int8_t)floor(10.0 * log10(rcv->pow10power_10 + pow(10.0, noiseStr/10.0)));
     rcv->msg = msg;
     rcv->lost = 0;
     rcv->ack = receive;
@@ -408,13 +390,12 @@ implementation {
       receiving = 1;
     }
 
-    list = outstandingReceptionHead;
-    while (list != NULL) {
+    
+    for (list = outstandingReceptionHead; list != NULL; list = list->next) {
       if (!shouldReceive(list->power - rcv->power)) {
         dbg("Gain,SNRLoss", "Going to lose packet from %i with signal %lf as am receiving a packet from %i with signal %lf\n", list->source, list->power, source, rcv->power);
         list->lost = 1;
       }
-      list = list->next;
     }
     
     rcv->next = outstandingReceptionHead;
@@ -424,8 +405,8 @@ implementation {
   }
   
   void sim_gain_put(int dest, message_t* msg, sim_time_t endTime, bool receive, double power, double reversePower) {
-    int prevNode = sim_node();
-    dbg("CpmModelC", "Enqueing reception event for %i at %llu with power %lf.\n", dest, endTime, power);
+    const int prevNode = sim_node();
+    dbg("CpmModelC", "Enqueueing reception event for %i at %llu with power %lf.\n", dest, endTime, power);
     sim_set_node(dest);
     enqueue_receive_event(prevNode, endTime, msg, receive, power, reversePower);
     sim_set_node(prevNode);
@@ -433,33 +414,35 @@ implementation {
 
   command void Model.putOnAirTo(int dest, message_t* msg, bool ack, sim_time_t endTime, double power, double reversePower) {
     receive_message_t* list;
-    gain_entry_t* neighborEntry = sim_gain_first(sim_node());
+    const void* neighborEntryIter;
     requestAck = ack;
     outgoing = msg;
     transmissionEndTime = endTime;
     dbg("CpmModelC", "Node %i transmitting to %i, finishes at %llu.\n", sim_node(), dest, endTime);
 
-    while (neighborEntry != NULL) {
-      int other = neighborEntry->mote;
-      sim_gain_put(other, msg, endTime, ack, power + sim_gain_value(sim_node(), other), reversePower + sim_gain_value(other, sim_node()));
-      neighborEntry = sim_gain_next(neighborEntry);
+    for (neighborEntryIter = sim_gain_iter(sim_node());
+         neighborEntryIter != NULL;
+         neighborEntryIter = sim_gain_next(sim_node(), neighborEntryIter))
+    {
+      const gain_entry_t* gain = sim_gain_iter_get(neighborEntryIter);
+      const int other = gain->mote;
+      const double other_gain = gain->gain;
+      sim_gain_put(other, msg, endTime, ack, power + other_gain, reversePower + sim_gain_value(other, sim_node()));
     }
 
-    list = outstandingReceptionHead;
-    while (list != NULL) {    
+    for (list = outstandingReceptionHead; list != NULL; list = list->next) {    
       list->lost = 1;
-      dbg("CpmModelC,SNRLoss", "Lost packet from %i because %i has outstanding reception, startTime %llu endTime %llu\n", list->source, sim_node(), list->start, list->end);
-      list = list->next;
+      dbg("CpmModelC,SNRLoss", "Lost packet from %i because %i has outstanding reception, startTime %llu endTime %llu\n",
+        list->source, sim_node(), list->start, list->end);
     }
   }
-    
+
 
   command void Model.setPendingTransmission() {
     transmitting = TRUE;
     dbg("CpmModelC", "setPendingTransmission: transmitting %i @ %s\n", transmitting, sim_time_string());
   }
 
-  
  default event void Model.receive(message_t* msg) {}
 
  sim_event_t* allocate_receive_event(sim_time_t endTime, receive_message_t* msg) {

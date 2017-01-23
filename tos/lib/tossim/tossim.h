@@ -50,7 +50,10 @@
 #include <packet.h>
 #include <hashtable.h>
 
- #include <functional>
+#include <functional>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 
 typedef struct variable_string {
   const char* type;
@@ -59,24 +62,36 @@ typedef struct variable_string {
   bool isArray;
 } variable_string_t;
 
-typedef struct nesc_app {
-  unsigned int numVariables;
-  const char** variableNames;
-  const char** variableTypes;
-  bool* variableArray;
-} nesc_app_t;
+class NescApp {
+public:
+    NescApp(unsigned int size)
+        : numVariables(size)
+        , variableNames(size)
+        , variableTypes(size)
+        , variableArray(size)
+    {
+    }
+
+    unsigned int numVariables;
+    std::vector<std::string> variableNames;
+    std::vector<std::string> variableTypes;
+    std::vector<bool> variableArray;
+};
 
 class Variable {
  public:
-  Variable(const char* name, const char* format, bool array, int mote);
+  Variable(const std::string& name, const char* format, bool array, int mote);
   ~Variable();
   variable_string_t getData();
+
+ private:
+  void update();
   
  private:
-  char* realName;
-  char* format;
+  std::string realName;
+  std::string format;
   void* ptr;
-  uint8_t* data;
+  std::unique_ptr<uint8_t[]> data;
   size_t len;
   int mote;
   bool isArray;
@@ -84,13 +99,16 @@ class Variable {
 
 class Mote {
  public:
-  Mote(nesc_app_t* app);
+  Mote(const NescApp* app);
   ~Mote();
 
-  unsigned long id() noexcept;
+  unsigned long id() const noexcept;
   
-  long long int euid() noexcept;
+  long long int euid() const noexcept;
   void setEuid(long long int id) noexcept;
+
+  long long int tag() const noexcept;
+  void setTag(long long int tag) noexcept;
 
   long long int bootTime() const noexcept;
   void bootAtTime(long long int time) noexcept;
@@ -100,21 +118,22 @@ class Mote {
   void turnOn() noexcept;
   void setID(unsigned long id) noexcept;  
 
+  void reserveNoiseTraces(size_t num_traces);
   void addNoiseTraceReading(int val);
   void createNoiseModel();
   int generateNoise(int when);
   
-  Variable* getVariable(const char* name);
-  
+  std::shared_ptr<Variable> getVariable(const char* name_cstr);
+
  private:
   unsigned long nodeID;
-  nesc_app_t* app;
-  struct hashtable* varTable;
+  const NescApp* app;
+  std::unordered_map<std::string, std::shared_ptr<Variable>> varTable;
 };
 
 class Tossim {
  public:
-  Tossim(nesc_app_t* app);
+  Tossim(NescApp app);
   ~Tossim();
   
   void init();
@@ -131,45 +150,37 @@ class Tossim {
 
   void addChannel(const char* channel, FILE* file);
   bool removeChannel(const char* channel, FILE* file);
+  void addCallback(const char* channel, std::function<void(const char*, size_t)> callback);
+
   void randomSeed(int seed);
 
-  void register_event_callback(std::function<bool(double)> callback, double time);
+  void register_event_callback(std::function<void(double)> callback, double time);
   
   bool runNextEvent();
-  unsigned int runAllEvents(std::function<bool(double)> continue_events, std::function<void (unsigned int)> callback);
-  unsigned int runAllEventsWithMaxTime(double end_time, std::function<bool()> continue_events, std::function<void (unsigned int)> callback);
 
-  MAC* mac();
-  Radio* radio();
-  Packet* newPacket();
+  void triggerRunDurationStart();
 
-private:
-  void free_motes();
+  long long int runAllEventsWithTriggeredMaxTime(
+    double duration,
+    double duration_upper_bound,
+    std::function<bool()> continue_events);
+  long long int runAllEventsWithTriggeredMaxTimeAndCallback(
+    double duration,
+    double duration_upper_bound,
+    std::function<bool()> continue_events,
+    std::function<void(long long int)> callback);
+
+  std::shared_ptr<MAC> mac();
+  std::shared_ptr<Radio> radio();
+  std::shared_ptr<Packet> newPacket();
 
  private:
-  nesc_app_t* app;
-  Mote** motes;
+  const NescApp app;
+  std::vector<std::unique_ptr<Mote>> motes;
   char timeBuf[128];
-};
 
-class JavaRandom
-{
-public:
-  JavaRandom(long long int seed) noexcept;
-  ~JavaRandom() = default;
-
-  void setSeed(long long int seed) noexcept;
-  long long int getSeed() const noexcept;
-
-  long long int next(int bits) noexcept;
-
-  double nextDouble() noexcept;
-  double nextGaussian() noexcept;
-
-private:
-  long long int _seed;
-  double _next_gaussian;
-  bool _has_next_gaussian;
+  bool duration_started;
+  long long int duration_started_at;
 };
 
 #endif // TOSSIM_H_INCLUDED

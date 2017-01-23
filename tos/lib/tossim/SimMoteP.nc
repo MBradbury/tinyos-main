@@ -49,14 +49,22 @@ module SimMoteP {
 implementation {
   long long int euid;
   long long int startTime;
+  long long int tag; // An arbitrary tag supplied by the developer, use to customise simulation actions.
   bool isOn;
   sim_event_t* bootEvent;
+  sim_event_t bootEventStore;
   
   async command long long int SimMote.getEuid() {
     return euid;
   }
   async command void SimMote.setEuid(long long int e) {
     euid = e;
+  }
+  async command long long int SimMote.getTag() {
+    return tag;
+  }
+  async command void SimMote.setTag(long long int t) {
+    tag = t;
   }
   async command long long int SimMote.getStartTime() {
     return startTime;
@@ -65,16 +73,25 @@ implementation {
     return isOn;
   }
 
-  async command int SimMote.getVariableInfo(char* name, void** addr, size_t* size) {
-    return __nesc_nido_resolve(sim_node(), name, (uintptr_t*)addr, (size_t*)size);
+  async command int SimMote.getVariableInfo(const char* name, void** addr, size_t* size) {
+    return __nesc_nido_resolve(sim_node(), (char*)name, (uintptr_t*)addr, (size_t*)size);
   }
 
   command void SimMote.turnOn() {
     if (!isOn) {
+      // Backup variables that need to survive the memset'ing in __nesc_nido_initialise
+      const long long int tag_store = tag, euid_store = euid;
+
       if (bootEvent != NULL) {
         bootEvent->cancelled = TRUE;
       }
+
       __nesc_nido_initialise(sim_node());
+
+      // Restore variables
+      tag = tag_store;
+      euid = euid_store;
+
       startTime = sim_time();
       dbg("SimMoteP", "Setting start time to %llu\n", startTime);
       isOn = TRUE;
@@ -102,6 +119,22 @@ implementation {
     call SimMote.setEuid(id);
     sim_set_node(tmp);
   }
+
+  long long int sim_mote_tag(int mote) @C() @spontaneous() {
+    long long int result;
+    int tmp = sim_node();
+    sim_set_node(mote);
+    result = call SimMote.getTag();
+    sim_set_node(tmp);
+    return result;
+  }
+
+  void sim_mote_set_tag(int mote, long long int t)  @C() @spontaneous() {
+    int tmp = sim_node();
+    sim_set_node(mote);
+    call SimMote.setTag(t);
+    sim_set_node(tmp);
+  }
   
   long long int sim_mote_start_time(int mote) @C() @spontaneous() {
     long long int result;
@@ -112,7 +145,7 @@ implementation {
     return result;
   }
 
-  int sim_mote_get_variable_info(int mote, char* name, void** ptr, size_t* len) @C() @spontaneous() {
+  int sim_mote_get_variable_info(int mote, const char* name, void** ptr, size_t* len) @C() @spontaneous() {
     int result;
     int tmpID = sim_node();
     sim_set_node(mote);
@@ -177,16 +210,15 @@ implementation {
       }
     }
     
-    bootEvent = sim_queue_allocate_raw_event();
+    bootEvent = &bootEventStore;
     bootEvent->time = startTime;
     bootEvent->mote = mote;
     bootEvent->force = TRUE;
     bootEvent->data = NULL;
     bootEvent->handle = sim_mote_boot_handle;
-    bootEvent->cleanup = sim_queue_cleanup_event;
+    bootEvent->cleanup = sim_queue_cleanup_none;
     sim_queue_insert(bootEvent);
     
     sim_set_node(tmp);
   }
-
 }
