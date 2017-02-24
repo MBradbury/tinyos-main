@@ -62,10 +62,10 @@ implementation {
   typedef struct receive_message receive_message_t;
   
   struct receive_message {
-    int source;
     sim_time_t start;
     sim_time_t end;
     double power;
+    int source;
     bool lost;
     bool ack;
     message_t* msg;
@@ -90,15 +90,19 @@ implementation {
     dbg("Gain", "Computing noise @ %s: %0.2f", sim_time_string(), localNoise);
     while (current != NULL) {
       sig += pow(10.0, current->power / 10.0);
-      	dbg_clear("Gain", " ");
+
+#ifdef DEBUG
+      dbg_clear("Gain", " ");
       if (current->power >= 0.0) {
-	dbg_clear("Gain", "+");
+        dbg_clear("Gain", "+");
       }
       dbg_clear("Gain", "%0.2f ", current->power);
+#endif
+
       current = current->next;
     }
-    dbg_clear("Gain", " = %0.2f\n", 10.0 * log(sig) / log(10.0));
-    return 10.0 * log(sig) / log(10.0);
+    dbg_clear("Gain", " = %0.2f\n", 10.0 * log10(sig);
+    return 10.0 * log10(sig);
   }
   
   void sim_gain_ack_handle(sim_event_t* evt)  {
@@ -116,8 +120,7 @@ implementation {
 
   command void Model.setClearValue(double value) {
     clearThreshold = value;
-    dbg("Gain", "Setting clear threshold to %f\n", clearThreshold);
-	
+    dbg("Gain", "Setting clear threshold to %f\n", clearThreshold);  
   }
   
   command bool Model.clearChannel() {
@@ -127,7 +130,7 @@ implementation {
   }
 
   void sim_gain_schedule_ack(int source, sim_time_t t) {
-    sim_event_t* ackEvent = (sim_event_t*)malloc(sizeof(sim_event_t));
+    sim_event_t* ackEvent = sim_queue_allocate_raw_event();
     ackEvent->mote = source;
     ackEvent->force = 1;
     ackEvent->cancelled = 0;
@@ -146,13 +149,13 @@ implementation {
     // to the received packet.
     while (list != NULL) {
       if (list->next == mine) {
-	predecessor = list;
+        predecessor = list;
       }
       if (list != mine) {
-	if ((list->power - sim_gain_sensitivity()) < mine->power) {
-	  dbg("Gain", "Lost packet from %i as I concurrently received a packet stronger than %lf\n", list->source, list->power);
-	  list->lost = 1;
-	}
+        if ((list->power - sim_gain_sensitivity()) < mine->power) {
+          dbg("Gain", "Lost packet from %i as I concurrently received a packet stronger than %lf\n", list->source, list->power);
+          list->lost = 1;
+        }
       }
       list = list->next;
     }
@@ -189,7 +192,7 @@ implementation {
       // If we scheduled an ack, receiving = 0 when it completes
       if (mine->ack && signal Model.shouldAck(mine->msg)) {
         dbg_clear("Gain", " scheduling ack.\n");
-	sim_gain_schedule_ack(mine->source, sim_time() + 1); 
+        sim_gain_schedule_ack(mine->source, sim_time() + 1); 
       }
       // We're searching for new packets again
       receiving = 0;
@@ -240,8 +243,8 @@ implementation {
     list = outstandingReceptionHead;
     while (list != NULL) {
       if ((list->power - sim_gain_sensitivity()) < power) {
-	dbg("Gain", "Lost packet from %i as I concurrently received a packet from %i stronger than %lf\n", list->source, source, list->power);
-	list->lost = 1;
+        dbg("Gain", "Lost packet from %i as I concurrently received a packet from %i stronger than %lf\n", list->source, source, list->power);
+        list->lost = 1;
       }
       list = list->next;
     }
@@ -280,7 +283,7 @@ implementation {
  default event void Model.receive(message_t* msg) {}
 
  sim_event_t* allocate_receive_event(sim_time_t endTime, receive_message_t* msg) {
-   sim_event_t* evt = (sim_event_t*)malloc(sizeof(sim_event_t));
+   sim_event_t* evt = sim_queue_allocate_raw_event();
    evt->mote = sim_node();
    evt->time = endTime;
    evt->handle = sim_gain_receive_handle;

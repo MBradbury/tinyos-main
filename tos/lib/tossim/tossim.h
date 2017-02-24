@@ -50,100 +50,137 @@
 #include <packet.h>
 #include <hashtable.h>
 
+#include <functional>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
 typedef struct variable_string {
-  char* type;
-  char* ptr;
+  const char* type;
+  void* ptr;
   int len;
-  int isArray;
+  bool isArray;
 } variable_string_t;
 
-typedef struct nesc_app {
-  int numVariables;
-  char** variableNames;
-  char** variableTypes;
-  int* variableArray;
-} nesc_app_t;
+class NescApp {
+public:
+    NescApp(unsigned int size)
+        : numVariables(size)
+        , variableNames(size)
+        , variableTypes(size)
+        , variableArray(size)
+    {
+    }
+
+    unsigned int numVariables;
+    std::vector<std::string> variableNames;
+    std::vector<std::string> variableTypes;
+    std::vector<bool> variableArray;
+};
 
 class Variable {
  public:
-  Variable(char* name, char* format, int array, int mote);
+  Variable(const std::string& name, const char* format, bool array, int mote);
   ~Variable();
   variable_string_t getData();
+
+ private:
+  void update();
   
  private:
-  char* name;
-  char* realName;
-  char* format;
-  int mote;
+  std::string realName;
+  std::string format;
   void* ptr;
-  char* data;
+  std::unique_ptr<uint8_t[]> data;
   size_t len;
-  int isArray;
-  variable_string_t str;
+  int mote;
+  bool isArray;
 };
 
 class Mote {
  public:
-  Mote(nesc_app_t* app);
+  Mote(const NescApp* app);
   ~Mote();
 
-  unsigned long id();
+  unsigned long id() const noexcept;
   
-  long long int euid();
-  void setEuid(long long int id);
+  long long int euid() const noexcept;
+  void setEuid(long long int id) noexcept;
 
-  long long int bootTime();
-  void bootAtTime(long long int time);
+  long long int tag() const noexcept;
+  void setTag(long long int tag) noexcept;
 
-  bool isOn();
-  void turnOff();
-  void turnOn();
-  void setID(unsigned long id);  
+  long long int bootTime() const noexcept;
+  void bootAtTime(long long int time) noexcept;
 
+  bool isOn() noexcept;
+  void turnOff() noexcept;
+  void turnOn() noexcept;
+  void setID(unsigned long id) noexcept;  
+
+  void reserveNoiseTraces(size_t num_traces);
   void addNoiseTraceReading(int val);
   void createNoiseModel();
   int generateNoise(int when);
   
-  Variable* getVariable(char* name);
-  
+  std::shared_ptr<Variable> getVariable(const char* name_cstr);
+
  private:
   unsigned long nodeID;
-  nesc_app_t* app;
-  struct hashtable* varTable;
+  const NescApp* app;
+  std::unordered_map<std::string, std::shared_ptr<Variable>> varTable;
 };
 
 class Tossim {
  public:
-  Tossim(nesc_app_t* app);
+  Tossim(NescApp app);
   ~Tossim();
   
   void init();
   
-  long long int time();
-  long long int ticksPerSecond();
-  char* timeStr();
-  void setTime(long long int time);
+  long long int time() const noexcept;
+  double timeInSeconds() const noexcept;
+  static long long int ticksPerSecond() noexcept;
+  const char* timeStr() noexcept;
+  void setTime(long long int time) noexcept;
   
-  Mote* currentNode();
-  Mote* getNode(unsigned long nodeID);
-  void setCurrentNode(unsigned long nodeID);
+  Mote* currentNode() noexcept;
+  Mote* getNode(unsigned long nodeID) noexcept;
+  void setCurrentNode(unsigned long nodeID) noexcept;
 
-  void addChannel(char* channel, FILE* file);
-  bool removeChannel(char* channel, FILE* file);
+  void addChannel(const char* channel, FILE* file);
+  bool removeChannel(const char* channel, FILE* file);
+  void addCallback(const char* channel, std::function<void(const char*, size_t)> callback);
+
   void randomSeed(int seed);
+
+  void register_event_callback(std::function<void(double)> callback, double time);
   
   bool runNextEvent();
 
-  MAC* mac();
-  Radio* radio();
-  Packet* newPacket();
+  void triggerRunDurationStart();
+
+  long long int runAllEventsWithTriggeredMaxTime(
+    double duration,
+    double duration_upper_bound,
+    std::function<bool()> continue_events);
+  long long int runAllEventsWithTriggeredMaxTimeAndCallback(
+    double duration,
+    double duration_upper_bound,
+    std::function<bool()> continue_events,
+    std::function<void(long long int)> callback);
+
+  std::shared_ptr<MAC> mac();
+  std::shared_ptr<Radio> radio();
+  std::shared_ptr<Packet> newPacket();
 
  private:
-  char timeBuf[256];
-  nesc_app_t* app;
-  Mote** motes;
+  const NescApp app;
+  std::vector<std::unique_ptr<Mote>> motes;
+  char timeBuf[128];
+
+  bool duration_started;
+  long long int duration_started_at;
 };
-
-
 
 #endif // TOSSIM_H_INCLUDED

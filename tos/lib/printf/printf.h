@@ -69,11 +69,13 @@
 #undef putchar
 
 #include "message.h"
+
 int printfflush();
 
 #ifndef PRINTF_MSG_LENGTH
 #define PRINTF_MSG_LENGTH	28
 #endif
+
 typedef nx_struct printf_msg {
   nx_uint8_t buffer[PRINTF_MSG_LENGTH];
 } printf_msg_t;
@@ -82,5 +84,9 @@ enum {
   AM_PRINTF_MSG = 100,
 };
 
-#endif //PRINTF_H
+#define simdbg(name, fmtstr, ...) do { printf("%s:D:%" PRIu16 ":%lu:" fmtstr, name, TOS_NODE_ID, call LocalTime.get(), ##__VA_ARGS__); } while (FALSE)
+#define simdbg_clear(name, fmtstr, ...) do { printf(fmtstr, ##__VA_ARGS__); } while (FALSE)
+#define simdbgerror(name, fmtstr, ...) do { printf("%s:E:%" PRIu16 ":%lu:" fmtstr, name, TOS_NODE_ID, call LocalTime.get(), ##__VA_ARGS__); } while (FALSE)
+#define simdbgerror_clear(name, fmtstr, ...) do { printf(fmtstr, ##__VA_ARGS__); } while (FALSE)
 
+#endif //PRINTF_H

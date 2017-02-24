@@ -69,7 +69,7 @@ implementation {
 
   
   void sim_schedule_ack(int source, sim_time_t time) {
-    sim_event_t* ackEvent = (sim_event_t*)malloc(sizeof(sim_event_t));
+    sim_event_t* ackEvent = sim_queue_allocate_raw_event();
     ackEvent->mote = source;
     ackEvent->force = 0;
     ackEvent->cancelled = 0;
@@ -88,17 +88,17 @@ implementation {
       dbg("Binary", "Handling receive event for %i.\n", sim_node());
       loss *= 1000000.0;
       if (randVal < (int)loss) {
-	signal Model.receive(incoming);
+        signal Model.receive(incoming);
 
-	loss = sim_binary_loss(sim_node(), incomingSource);
-	randVal = sim_random() % 1000000;
-	loss *= 1000000.0;
-	if (randVal < (int)loss) {
-	  sim_schedule_ack(incomingSource, sim_time());
-	}
+        loss = sim_binary_loss(sim_node(), incomingSource);
+        randVal = sim_random() % 1000000;
+        loss *= 1000000.0;
+        if (randVal < (int)loss) {
+          sim_schedule_ack(incomingSource, sim_time());
+        }
       }
       else {
-	dbg("Binary", "Packet lost.\n");
+        dbg("Binary", "Packet lost.\n");
       }
     }
     else {

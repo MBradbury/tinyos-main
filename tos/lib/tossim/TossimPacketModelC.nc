@@ -57,6 +57,8 @@
 #include <TossimRadioMsg.h>
 #include <sim_csma.h>
 
+#include "assert.h"
+
 module TossimPacketModelC { 
   provides {
     interface Init;
@@ -148,7 +150,7 @@ implementation {
     meta->ack = 0;
     meta->strength = 0;
     meta->time = 0;
-    sending = FALSE;
+    sending = NULL;
     signal Packet.sendDone(msg, running? SUCCESS:EOFF);
   }
 
@@ -209,6 +211,7 @@ implementation {
 
 
   void send_backoff(sim_event_t* evt) {
+    const long long int ticks_per_csma_symbol = sim_ticks_per_sec() / sim_csma_symbols_per_sec();
     backoffCount++;
     if (call GainRadioModel.clearChannel()) {
       neededFreeSamples--;
@@ -219,7 +222,7 @@ implementation {
     if (neededFreeSamples == 0) {
       sim_time_t delay;
       delay = sim_csma_rxtx_delay();
-      delay *= (sim_ticks_per_sec() / sim_csma_symbols_per_sec());
+      delay *= ticks_per_csma_symbol;
       evt->time += delay;
       transmitting = TRUE;
       call GainRadioModel.setPendingTransmission();
@@ -234,7 +237,7 @@ implementation {
       backoff %= modulo;
 									
       backoff += sim_csma_init_low();
-      backoff *= (sim_ticks_per_sec() / sim_csma_symbols_per_sec());
+      backoff *= ticks_per_csma_symbol;
       evt->time += backoff;
       sim_queue_insert(evt);
     }
@@ -253,6 +256,7 @@ implementation {
   void send_transmit(sim_event_t* evt) {
     sim_time_t duration;
     tossim_metadata_t* metadata = getMetadata(sending);
+    const long long int ticks_per_csma_symbol = sim_ticks_per_sec() / sim_csma_symbols_per_sec();
 
     duration = 8 * sendingLength;
     duration /= sim_csma_bits_per_symbol();
@@ -261,7 +265,7 @@ implementation {
     if (metadata->ack) {
       duration += sim_csma_ack_time();
     }
-    duration *= (sim_ticks_per_sec() / sim_csma_symbols_per_sec());
+    duration *= ticks_per_csma_symbol;
 
     evt->time += duration;
     evt->handle = send_transmit_done;
@@ -270,7 +274,7 @@ implementation {
     call GainRadioModel.putOnAirTo(destNode, sending, metadata->ack, evt->time, 0.0, 0.0);
     metadata->ack = 0;
 
-    evt->time += (sim_csma_rxtx_delay() *  (sim_ticks_per_sec() / sim_csma_symbols_per_sec()));
+    evt->time += (sim_csma_rxtx_delay() *  ticks_per_csma_symbol);
 
     dbg("TossimPacketModelC", "PACKET: Send done at %llu.\n", evt->time);
 	
@@ -290,16 +294,14 @@ implementation {
       signal Packet.receive(msg);
     }
   }
-
-  uint8_t error = 0;
   
   event void GainRadioModel.acked(message_t* msg) {
     if (running) {
       tossim_metadata_t* metadata = getMetadata(sending);
       metadata->ack = 1;
       if (msg != sending) {
-	error = 1;
-	dbg("TossimPacketModelC", "Requested ack for 0x%x, but outgoing packet is 0x%x.\n", msg, sending);
+        dbgerror("TossimPacketModelC", "Requested ack for 0x%x, but outgoing packet is 0x%x.\n", msg, sending);
+        assert(msg == sending);
       }
     }
   }

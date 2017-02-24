@@ -46,7 +46,8 @@ configuration LedsC {
   provides interface Leds;
 }
 implementation {
-  components LedsP, PlatformLedsC;
+  components LedsP;
+  components PlatformLedsC;
 
   Leds = LedsP;
 

@@ -111,12 +111,12 @@ uint8_t sim_packet_max_length(sim_packet_t* msg) __attribute__ ((C, spontaneous)
   return TOSH_DATA_LENGTH;
 }
 
-sim_packet_t* sim_packet_allocate () __attribute__ ((C, spontaneous)){
+sim_packet_t* sim_packet_allocate(void) __attribute__ ((C, spontaneous)){
   return (sim_packet_t*)malloc(sizeof(message_t));
 }
 
 void sim_packet_free(sim_packet_t* p) __attribute__ ((C, spontaneous)) {
-  printf("sim_packet.c: Freeing packet %p\n", p);
+  //fprintf(stderr, "sim_packet.c: Freeing packet %p\n", p);
   free(p);
 }
 

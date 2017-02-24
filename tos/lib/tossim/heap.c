@@ -55,7 +55,7 @@
 #include <stdlib.h> // for rand(3)
 #include <stdio.h>  // For printf(3)
 
-const int STARTING_SIZE = 511;
+static const int STARTING_SIZE = 511;
 
 #define HEAP_NODE(heap, index) (((node_t*)(heap->data))[index])
 
@@ -64,14 +64,16 @@ typedef struct node {
   long long int key;
 } node_t;
 
-void down_heap(heap_t* heap, int findex);
-void up_heap(heap_t* heap, int findex);
-void swap(node_t* first, node_t* second);
+static void down_heap(heap_t* heap, int findex);
+static void up_heap(heap_t* heap, int findex);
+static void swap(node_t* __restrict first, node_t* __restrict second);
+
 //Srikanth - BLIPSIM
 node_t* hprev(node_t* node);
 node_t* hnext(node_t* next);
 //Srikanth - BLIPSIM
 //
+
 void init_node(node_t* node) {
   node->data = NULL;
   node->key = -1;
@@ -83,15 +85,24 @@ void init_heap(heap_t* heap) {
   heap->data = malloc(sizeof(node_t) * heap->private_size);
 }
 
-int heap_size(heap_t* heap) {
+void free_heap(heap_t* heap) {
+  if (heap != NULL && heap->data != NULL) {
+    free(heap->data);
+    heap->data = NULL;
+    heap->size = 0;
+    heap->private_size = 0;
+  }
+}
+
+int heap_size(const heap_t* heap) {
   return heap->size;
 }
 
-int is_empty(heap_t* heap) {
+static inline int is_empty(const heap_t* heap) {
   return heap->size == 0;
 }
 
-int heap_is_empty(heap_t* heap) {
+int heap_is_empty(const heap_t* heap) {
   return is_empty(heap);
 }
 
@@ -130,17 +141,10 @@ void* heap_pop_min_data(heap_t* heap, long long int* key) {
 }
 
 void expand_heap(heap_t* heap) {
-  int new_size = (heap->private_size * 2) + 1;
-  void* new_data = malloc(sizeof(node_t) * new_size);
+  heap->private_size = (heap->private_size * 2) + 1;
+  heap->data = realloc(heap->data, sizeof(node_t) * heap->private_size);
 
   //dbg(DBG_SIM, "Resized heap from %i to %i.\n", heap->private_size, new_size);
-  
-  memcpy(new_data, heap->data, (sizeof(node_t) * heap->private_size));
-  free(heap->data);
-
-  heap->data = new_data;
-  heap->private_size = new_size;
-  
 }
 
 void heap_insert(heap_t* heap, void* data, long long int key) {
@@ -157,7 +161,7 @@ void heap_insert(heap_t* heap, void* data, long long int key) {
   heap->size++;
 }
 
-void swap(node_t* first, node_t* second) {
+static void swap(node_t* __restrict first, node_t* __restrict second) {
   long long int key;
   void* data;
 
@@ -170,8 +174,8 @@ void swap(node_t* first, node_t* second) {
   second->data = data;
 }
 
-void down_heap(heap_t* heap, int findex) {
-  int right_index =  ((findex + 1) * 2);
+static void down_heap(heap_t* heap, int findex) {
+  int right_index = (findex + 1) * 2;
   int left_index = (findex * 2) + 1;
 
   if (right_index < heap->size) { // Two children
@@ -196,7 +200,7 @@ void down_heap(heap_t* heap, int findex) {
   }
 }
 
-void up_heap(heap_t* heap, int findex) {
+static void up_heap(heap_t* heap, int findex) {
   int parent_index;
   if (findex == 0) {
     return;

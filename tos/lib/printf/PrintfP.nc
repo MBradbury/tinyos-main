@@ -93,7 +93,6 @@ module PrintfP @safe() {
     interface PrintfQueue<uint8_t> as Queue;
     interface AMSend;
     interface Packet;
-    interface Leds;
   }
 }
 implementation {
@@ -107,7 +106,9 @@ implementation {
   uint8_t state = S_STARTED;
   
   command error_t Init.init() {
-      atomic state = S_STARTED;
+      atomic {
+        state = S_STARTED;
+      }
       return SUCCESS;
   }
 
@@ -116,13 +117,19 @@ implementation {
       post retrySend();
   }
   
-  void sendNext() {
-    int i;
+  task void sendNext() {
     printf_msg_t* m = (printf_msg_t*)call Packet.getPayload(&printfMsg, sizeof(printf_msg_t));
-    uint16_t length_to_send = (call Queue.size() < sizeof(printf_msg_t)) ? call Queue.size() : sizeof(printf_msg_t);
     memset(m->buffer, 0, sizeof(printf_msg_t));
-    for(i=0; i<length_to_send; i++)
-      m->buffer[i] = call Queue.dequeue();
+
+    atomic {
+      const uint16_t length_to_send = (call Queue.size() < sizeof(printf_msg_t)) ? call Queue.size() : sizeof(printf_msg_t);
+      unsigned int i;
+      for(i=0; i<length_to_send; i++)
+      {
+        m->buffer[i] = call Queue.dequeue();
+      }
+    }
+
     if(call AMSend.send(AM_BROADCAST_ADDR, &printfMsg, sizeof(printf_msg_t)) != SUCCESS)
       post retrySend();  
   }
@@ -134,31 +141,53 @@ implementation {
       if(call Queue.empty())
         return FAIL;
       state = S_FLUSHING;
+      post sendNext();
     }
-    sendNext();
     return SUCCESS;
   }
     
-  event void AMSend.sendDone(message_t* msg, error_t error) {    
+  event void AMSend.sendDone(message_t* msg, error_t error) {
     if(error == SUCCESS) {
-      if(call Queue.size() > 0)
-        sendNext();
-      else state = S_STARTED;
+      atomic {
+        if(call Queue.size() > 0) {
+          post sendNext();
+        }
+        else {
+          state = S_STARTED;
+        }
+      } 
     }
-    else post retrySend();
+    else {
+      post retrySend();
+    }
   }
   
 #undef putchar
   command int Putchar.putchar (int c)
   {
-    if((state == S_STARTED) && (call Queue.size() >= ((PRINTF_BUFFER_SIZE)/2))) {
-      state = S_FLUSHING;
-      sendNext();
-    }
     atomic {
-      if(call Queue.enqueue(c) == SUCCESS)
-        return 0;
-      else return -1;
+      if (state == S_STARTED && call Queue.size() >= (call Queue.maxSize() / 2)) {
+        state = S_FLUSHING;
+        post sendNext();
+      }
+
+      if (call Queue.enqueue(c) == SUCCESS)
+      {
+        // Flush if newline
+        if (c == '\n' && state == S_STARTED)
+        {
+          state = S_FLUSHING;
+          post sendNext();
+        }
+
+        // On success the character written is returned
+        return c;
+      }
+      else
+      {
+        // On failure EOF (-1) is returned
+        return -1;
+      }
     }
   }
 }

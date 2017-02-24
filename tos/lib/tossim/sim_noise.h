@@ -60,32 +60,12 @@ enum {
   NOISE_MIN_TRACE = 128, 
   NOISE_NUM_VALUES = NOISE_MAX - NOISE_MIN + 1,    //TODO check the + 1, also in NOISE_BIN_SIZE above in the inner parens
 };
-  
-typedef struct sim_noise_hash_t {
-  char key[NOISE_HISTORY];
-  int numElements;
-  int size;
-  char *elements;
-  char flag;
-  float dist[NOISE_NUM_VALUES];
-} sim_noise_hash_t;
 
-typedef struct sim_noise_node_t {
-  //char key[NOISE_HISTORY];
-  char* key[16];
-  char freqKey[NOISE_HISTORY];
-  char lastNoiseVal[16];
-  uint32_t noiseGenTime[16];
-  struct hashtable *noiseTable;
-  char* noiseTrace;
-  uint32_t noiseTraceLen;
-  uint32_t noiseTraceIndex;
-  bool generated;
-} sim_noise_node_t;
-
-void sim_noise_init();
+void sim_noise_init(void);
+void sim_noise_free(void);
 char sim_real_noise(uint16_t node_id, uint32_t cur_t);
-char sim_noise_generate(uint16_t node_id, uint8_t channel, uint32_t cur_t);   // char sim_noise_generate(uint16_t node_id, uint32_t cur_t);
+char sim_noise_generate(uint16_t node_id, uint8_t channel, uint32_t cur_t);
+void sim_noise_reserve(uint16_t node_id, uint32_t num_traces);
 void sim_noise_trace_add(uint16_t node_id, char val);
 void sim_noise_create_model(uint16_t node_id);
   

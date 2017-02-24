@@ -42,17 +42,17 @@
 
 Packet::Packet() {
   msgPtr = sim_packet_allocate();
-  allocated = 1;
+  allocated = true;
 }
 
 Packet::Packet(sim_packet_t* m) {
   if (m != NULL) {
     msgPtr = m;
-    allocated = 0;
+    allocated = false;
   }
   else {
     msgPtr = sim_packet_allocate();
-    allocated = 1;
+    allocated = true;
   }
 }
 
@@ -83,21 +83,21 @@ int Packet::length() {
   return sim_packet_length(msgPtr);
 }
 
-void Packet::setType(int type) {
-  sim_packet_set_type(msgPtr, (uint8_t)type);
+void Packet::setType(int packet_type) {
+  sim_packet_set_type(msgPtr, (uint8_t)packet_type);
 }
 int Packet::type() {
   return sim_packet_type(msgPtr);
 }
 
 char* Packet::data() {
-  char* val =  (char*)sim_packet_data(msgPtr);
+  char* val = (char*)sim_packet_data(msgPtr);
   return val;
 }
 
-void Packet::setData(char* data, int len) {
-  len = (len > maxLength())? maxLength():len;
-  memcpy(sim_packet_data(msgPtr), data, len);
+void Packet::setData(char* packet_data, int len) {
+  len = std::min(maxLength(), len);
+  memcpy(sim_packet_data(msgPtr), packet_data, len);
   setLength(len);
 }
 
@@ -121,10 +121,10 @@ void Packet::deliverNow(int node) {
   deliver(node, 0);
 }
 
-void Packet::setDsn(int dsn) {
-  sim_packet_set_dsn(msgPtr, (uint8_t)dsn);
+void Packet::setDsn(int new_dsn) {
+  sim_packet_set_dsn(msgPtr, (uint8_t)new_dsn);
 }
 
 int Packet::dsn() {
-  sim_packet_dsn(msgPtr);
+  return sim_packet_dsn(msgPtr);
 }

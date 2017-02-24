@@ -41,53 +41,53 @@
 
 #include <sim_csma.h>
 
-int csmaInitHigh = SIM_CSMA_INIT_HIGH;
-int csmaInitLow = SIM_CSMA_INIT_LOW;
-int csmaHigh = SIM_CSMA_HIGH;
-int csmaLow = SIM_CSMA_LOW;
-int csmaSymbolsPerSec = SIM_CSMA_SYMBOLS_PER_SEC;
-int csmaBitsPerSymbol = SIM_CSMA_BITS_PER_SYMBOL;
-int csmaPreambleLength = SIM_CSMA_PREAMBLE_LENGTH;
-int csmaExponentBase = SIM_CSMA_EXPONENT_BASE;
-int csmaMaxIterations = SIM_CSMA_MAX_ITERATIONS;
-int csmaMinFreeSamples = SIM_CSMA_MIN_FREE_SAMPLES;
-int csmaRxTxDelay = SIM_CSMA_RXTX_DELAY;
-int csmaAckTime = SIM_CSMA_ACK_TIME;
+static int csmaInitHigh = SIM_CSMA_INIT_HIGH;
+static int csmaInitLow = SIM_CSMA_INIT_LOW;
+static int csmaHigh = SIM_CSMA_HIGH;
+static int csmaLow = SIM_CSMA_LOW;
+static int csmaSymbolsPerSec = SIM_CSMA_SYMBOLS_PER_SEC;
+static int csmaBitsPerSymbol = SIM_CSMA_BITS_PER_SYMBOL;
+static int csmaPreambleLength = SIM_CSMA_PREAMBLE_LENGTH;
+static int csmaExponentBase = SIM_CSMA_EXPONENT_BASE;
+static int csmaMaxIterations = SIM_CSMA_MAX_ITERATIONS;
+static int csmaMinFreeSamples = SIM_CSMA_MIN_FREE_SAMPLES;
+static int csmaRxTxDelay = SIM_CSMA_RXTX_DELAY;
+static int csmaAckTime = SIM_CSMA_ACK_TIME;
 
-int sim_csma_init_high() __attribute__ ((C, spontaneous)) {
+int sim_csma_init_high(void) __attribute__ ((C, spontaneous)) {
   return csmaInitHigh;
 }
-int sim_csma_init_low() __attribute__ ((C, spontaneous)) {
+int sim_csma_init_low(void) __attribute__ ((C, spontaneous)) {
   return csmaInitLow;
 }
-int sim_csma_high() __attribute__ ((C, spontaneous)) {
+int sim_csma_high(void) __attribute__ ((C, spontaneous)) {
   return csmaHigh;
 }
-int sim_csma_low() __attribute__ ((C, spontaneous)) {
+int sim_csma_low(void) __attribute__ ((C, spontaneous)) {
   return csmaLow;
 }
-int sim_csma_symbols_per_sec() __attribute__ ((C, spontaneous)) {
+int sim_csma_symbols_per_sec(void) __attribute__ ((C, spontaneous)) {
   return csmaSymbolsPerSec;
 }
-int sim_csma_bits_per_symbol() __attribute__ ((C, spontaneous)) {
+int sim_csma_bits_per_symbol(void) __attribute__ ((C, spontaneous)) {
   return csmaBitsPerSymbol;
 }
-int sim_csma_preamble_length() __attribute__ ((C, spontaneous)) {
+int sim_csma_preamble_length(void) __attribute__ ((C, spontaneous)) {
   return csmaPreambleLength;
 }
-int sim_csma_exponent_base() __attribute__ ((C, spontaneous)) {
-  return csmaExponentBase;;
+int sim_csma_exponent_base(void) __attribute__ ((C, spontaneous)) {
+  return csmaExponentBase;
 }
-int sim_csma_max_iterations() __attribute__ ((C, spontaneous)) {
+int sim_csma_max_iterations(void) __attribute__ ((C, spontaneous)) {
   return csmaMaxIterations;
 }
-int sim_csma_min_free_samples() __attribute__ ((C, spontaneous)) {
+int sim_csma_min_free_samples(void) __attribute__ ((C, spontaneous)) {
   return csmaMinFreeSamples;
 }
-int sim_csma_rxtx_delay() __attribute__ ((C, spontaneous)) {
+int sim_csma_rxtx_delay(void) __attribute__ ((C, spontaneous)) {
   return csmaRxTxDelay;
 }
-int sim_csma_ack_time() __attribute__ ((C, spontaneous)) {
+int sim_csma_ack_time(void) __attribute__ ((C, spontaneous)) {
   return csmaAckTime;
 }
 

@@ -51,10 +51,12 @@ extern "C" {
 #endif
 
 typedef struct gain_entry {
-  int mote;
   double gain;
-  struct gain_entry* next;  
+  int mote;
 } gain_entry_t;
+
+void sim_gain_init(void);
+void sim_gain_free(void);
   
 void sim_gain_add(int src, int dest, double gain);
 double sim_gain_value(int src, int dest);
@@ -66,10 +68,11 @@ double sim_gain_noise_mean(int node);
 double sim_gain_noise_range(int node);
 
 void sim_gain_set_sensitivity(double value);
-double sim_gain_sensitivity();
+double sim_gain_sensitivity(void);
   
-gain_entry_t* sim_gain_first(int src);
-gain_entry_t* sim_gain_next(gain_entry_t* e);
+const void* sim_gain_iter(int src);
+const void* sim_gain_next(int src, const void* iter);
+const gain_entry_t* sim_gain_iter_get(const void* iter);
   
 #ifdef __cplusplus
 }

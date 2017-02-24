@@ -75,8 +75,8 @@ class Packet {
     int dsn();
     
  private:
-    int allocated;
     sim_packet_t* msgPtr;
+    bool allocated;
 };
 
 #endif

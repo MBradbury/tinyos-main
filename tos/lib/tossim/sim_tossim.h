@@ -50,30 +50,31 @@ extern "C" {
 
 typedef long long int sim_time_t;
   
-void sim_init();
-void sim_start();
-void sim_end();
+void sim_init(void);
+void sim_end(void);
 
 void sim_random_seed(int seed);
-int sim_random();
+int sim_random(void);
   
-sim_time_t sim_time();
+sim_time_t sim_time(void);
 void sim_set_time(sim_time_t time);
-sim_time_t sim_ticks_per_sec();
+sim_time_t sim_ticks_per_sec(void);
   
 unsigned long sim_node();
 void sim_set_node(unsigned long node);
 
 int sim_print_time(char* buf, int bufLen, sim_time_t time);
 int sim_print_now(char* buf, int bufLen);
-char* sim_time_string();
+const char* sim_time_string(void);
 
-void sim_add_channel(char* channel, FILE* file);
-bool sim_remove_channel(char* channel, FILE* file);
+void sim_add_channel(const char* channel, FILE* file);
+bool sim_remove_channel(const char* channel, FILE* file);
+void sim_add_callback(const char* channel, void (*handle)(void* data, const char* line, size_t line_length), void* data);
   
-bool sim_run_next_event();
+bool sim_run_next_event(void);
 
-  
+void sim_register_event(sim_time_t execution_time, void (*handle)(void*), void* data);
+
 #ifdef __cplusplus
 }
 #endif

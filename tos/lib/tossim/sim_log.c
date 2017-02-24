@@ -41,35 +41,61 @@
 #include <sim_log.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <hashtable.h>
+#include <hash_table.h>
 #include <string.h>
 
 enum {
-  DEFAULT_CHANNEL_SIZE = 8
+  DEFAULT_CHANNEL_SIZE = 4,
+  DEFAULT_CALLBACKS_SIZE = 1,
 };
 
+typedef struct sim_log_callback {
+  void (*handle)(void* data, const char* line, size_t line_length);
+  void* data;
+} sim_log_callback_t;
+
 typedef struct sim_log_output {
-  int num;
+  int num_files;
   FILE** files;
+
+  int num_callbacks;
+  sim_log_callback_t** callbacks;
 } sim_log_output_t;
 
 typedef struct sim_log_channel {
   const char* name;
-  int numOutputs;
-  int size;
+
+  int num_outputs;
+  int size_outputs;
   FILE** outputs;
+
+  int num_callbacks;
+  int size_callbacks;
+  sim_log_callback_t** callbacks;
 } sim_log_channel_t;
 
 enum {
   SIM_LOG_OUTPUT_COUNT = uniqueCount("TOSSIM.debug")
 };
 
-sim_log_output_t outputs[SIM_LOG_OUTPUT_COUNT];
-struct hashtable* channelTable = NULL;
+static sim_log_output_t outputs[SIM_LOG_OUTPUT_COUNT];
+static struct hash_table channelTable;
+
+static bool write_performed = FALSE;
+
+void sim_log_reset_flag(void) __attribute__ ((C, spontaneous))
+{
+  write_performed = FALSE;
+}
+
+bool sim_log_test_flag(void) __attribute__ ((C, spontaneous))
+{
+  return write_performed;
+}
 
 
-static unsigned int sim_log_hash(void* key);
-static int sim_log_eq(void* key1, void* key2);
+static unsigned int sim_log_hash(const void* key);
+static int sim_log_eq(const void* key1, const void* key2);
 
 
 // First we count how many outputs there are,
@@ -81,12 +107,14 @@ static int sim_log_eq(void* key1, void* key2);
 // to stdout. So when the channel's FILE*s are copied
 // into the debug point output array, this checks
 // for redundancies by checking file descriptors.
-static void fillInOutput(int id, char* name) {
-  char* termination = name;
-  char* namePos = name;
-  int count = 0;
-  char* newName = (char*)malloc(strlen(name) + 1);
-  memset(newName, 0, strlen(name) + 1);
+static void fillInOutput(int id, const char* name) {
+  const char* termination = name;
+  const char* namePos = name;
+  int count_outputs = 0;
+  int count_callbacks = 0;
+  const size_t nameLen = strlen(name);
+  char* newName = (char*)calloc(nameLen + 1, sizeof(char));
+
   // Count the outputs
   while (termination != NULL) {
     sim_log_channel_t* channel;
@@ -99,12 +127,13 @@ static void fillInOutput(int id, char* name) {
     // Otherwise, memcpy over and null terminate
     else {
       memcpy(newName, namePos, (termination - namePos));
-      newName[termination - namePos] = 0;
+      newName[termination - namePos] = '\0';
     }
     
-    channel = hashtable_search(channelTable, newName);
+    channel = hash_table_search_data(&channelTable, newName);
     if (channel != NULL) {
-      count += channel->numOutputs;
+      count_outputs += channel->num_outputs;
+      count_callbacks += channel->num_callbacks;
     }
 
     namePos = termination + 1;
@@ -114,8 +143,11 @@ static void fillInOutput(int id, char* name) {
   namePos = name;
   
   // Allocate
-  outputs[id].files = (FILE**)malloc(sizeof(FILE*) * count);
-  outputs[id].num = 0;
+  outputs[id].files = (FILE**)malloc(sizeof(FILE*) * count_outputs);
+  outputs[id].num_files = 0;
+
+  outputs[id].callbacks = (sim_log_callback_t**)malloc(sizeof(sim_log_callback_t*) * count_outputs);
+  outputs[id].num_callbacks = 0;
 
   // Fill it in
   while (termination != NULL) {
@@ -132,179 +164,327 @@ static void fillInOutput(int id, char* name) {
       newName[termination - namePos] = 0;
     }
     
-    channel = hashtable_search(channelTable, newName);
+    channel = hash_table_search_data(&channelTable, newName);
     if (channel != NULL) {
       int i, j;
-      for (i = 0; i < channel->numOutputs; i++) {
-	int duplicate = 0;
-	int outputCount = outputs[id].num;
-	// Check if we already have this file descriptor in the output
-	// set, and if so, ignore it.
-	for (j = 0; j < outputCount; j++) {
-	  if (fileno(outputs[id].files[j]) == fileno(channel->outputs[i])) {
-	    duplicate = 1;
-	    j = outputCount;
-	  }
-	}
-	if (!duplicate) {
-	  outputs[id].files[outputCount] = channel->outputs[i];
-	  outputs[id].num++;
-	}
+      for (i = 0; i < channel->num_outputs; i++) {
+        bool duplicate = FALSE;
+        const int outputCount = outputs[id].num_files;
+        // Check if we already have this file descriptor in the output
+        // set, and if so, ignore it.
+        for (j = 0; j < outputCount; j++) {
+          if (fileno(outputs[id].files[j]) == fileno(channel->outputs[i])) {
+            duplicate = TRUE;
+            j = outputCount;
+          }
+        }
+        if (!duplicate) {
+          outputs[id].files[outputCount] = channel->outputs[i];
+          outputs[id].num_files++;
+        }
+      }
+
+      for (i = 0; i < channel->num_callbacks; ++i) {
+        outputs[id].callbacks[outputs[id].num_callbacks] = channel->callbacks[i];
+        outputs[id].num_callbacks++;
       }
     }
     namePos = termination + 1;
   }
+  free(newName);
 }
 
-void sim_log_init() {
+void sim_log_init(void) {
   int i;
 
-  channelTable = create_hashtable(128, sim_log_hash, sim_log_eq);
+  hash_table_create(&channelTable, sim_log_hash, sim_log_eq);
   
   for (i = 0; i < SIM_LOG_OUTPUT_COUNT; i++) {
-    outputs[i].num = 1;
-    outputs[i].files = (FILE**)malloc(sizeof(FILE*));
-    outputs[i].files[0] = fdopen(1, "w"); // STDOUT
+    outputs[i].num_files = 1;
+    outputs[i].files = (FILE**)malloc(sizeof(FILE*) * 1);
+    outputs[i].files[0] = stdout;
+
+    outputs[i].callbacks = NULL;
+    outputs[i].num_callbacks = 0;
   }
-  
+
+  write_performed = FALSE;
 }
 
-void sim_log_add_channel(char* name, FILE* file) {
+static void channel_table_entry_free(struct hash_entry* entry)
+{
+  free((void*)entry->key);
+  free(entry->data);
+}
+
+void sim_log_free(void) {
+  int i;
+
+  write_performed = FALSE;
+
+  for (i = 0; i < SIM_LOG_OUTPUT_COUNT; i++) {
+    free(outputs[i].files);
+    outputs[i].files = NULL;
+    outputs[i].num_files = 0;
+
+    free(outputs[i].callbacks);
+    outputs[i].callbacks = NULL;
+    outputs[i].num_callbacks = 0;
+  }
+
+  hash_table_destroy(&channelTable, &channel_table_entry_free);
+}
+
+void sim_log_add_channel(const char* name, FILE* file) {
   sim_log_channel_t* channel;
-  channel = (sim_log_channel_t*)hashtable_search(channelTable, name);
-  
+  channel = (sim_log_channel_t*)hash_table_search_data(&channelTable, name);
+
   // If there's no current entry, allocate one, initialize it,
   // and insert it.
   if (channel == NULL) {
-    char* newName = (char*)malloc(strlen(name) + 1);
-    strcpy(newName, name);
-    newName[strlen(name)] = 0;
+    const char* newName = strdup(name);
     
     channel = (sim_log_channel_t*)malloc(sizeof(sim_log_channel_t));
     channel->name = newName;
-    channel->numOutputs = 0;
-    channel->size = DEFAULT_CHANNEL_SIZE;
-    channel->outputs = (FILE**)malloc(sizeof(FILE*) * channel->size);
-    memset(channel->outputs, 0, sizeof(FILE*) * channel->size);
-    hashtable_insert(channelTable, newName, channel);
+
+    channel->num_outputs = 0;
+    channel->size_outputs = DEFAULT_CHANNEL_SIZE;
+    channel->outputs = (FILE**)calloc(channel->size_outputs, sizeof(FILE*));
+
+    channel->num_callbacks = 0;
+    channel->size_callbacks = DEFAULT_CALLBACKS_SIZE;
+    channel->callbacks = (sim_log_callback_t**)calloc(channel->size_callbacks, sizeof(sim_log_callback_t*));
+
+    hash_table_insert(&channelTable, newName, channel);
   }
 
   // If the channel output table is full, double the size of
   // channel->outputs.
-  if (channel->numOutputs == channel->size) {
-    FILE** newOutputs;
-    int newSize = channel->size * 2;
-    
-    newOutputs = (FILE**)malloc(sizeof(FILE*) * newSize);
-    memcpy(newOutputs, channel->outputs, channel->size * sizeof(FILE**));
-
-    free(channel->outputs);
-
-    channel->outputs = newOutputs;
-    channel->size    = newSize;
+  if (channel->num_outputs == channel->size_outputs) {
+    channel->size_outputs *= 2;
+    channel->outputs = (FILE**)realloc(channel->outputs, sizeof(FILE*) * channel->size_outputs);
   }
 
-  channel->outputs[channel->numOutputs] = file;
-  channel->numOutputs++;
+  channel->outputs[channel->num_outputs] = file;
+  channel->num_outputs++;
+
   sim_log_commit_change();
 }
 
-bool sim_log_remove_channel(char* output, FILE* file) {
+bool sim_log_remove_channel(const char* output, FILE* file) {
   sim_log_channel_t* channel;
   int i;
-  channel = (sim_log_channel_t*)hashtable_search(channelTable, output);  
+  channel = (sim_log_channel_t*)hash_table_search_data(&channelTable, output);  
 
   if (channel == NULL) {
     return FALSE;
   }
 
   // Note: if a FILE* has duplicates, this removes all of them
-  for (i = 0; i < channel->numOutputs; i++) {
+  for (i = 0; i < channel->num_outputs; i++) {
     FILE* f = channel->outputs[i];
     if (file == f) {
-      memcpy(&channel->outputs[i], &channel->outputs[i + 1], (channel->numOutputs) - (i + 1));
-      channel->outputs[channel->numOutputs - 1] = NULL;
-      channel->numOutputs--;
+      memcpy(&channel->outputs[i], &channel->outputs[i + 1], (channel->num_outputs) - (i + 1));
+      channel->outputs[channel->num_outputs - 1] = NULL;
+      channel->num_outputs--;
     }
   }
   
   return TRUE;
 }
+
+void sim_log_add_callback(const char* name, void (*handle)(void* data, const char* line, size_t line_length), void* data) {
+  sim_log_channel_t* channel;
+  sim_log_callback_t* callback;
+
+  channel = (sim_log_channel_t*)hash_table_search_data(&channelTable, name);
   
-void sim_log_commit_change() {
+  // If there's no current entry, allocate one, initialize it,
+  // and insert it.
+  if (channel == NULL) {
+    const char* newName = strdup(name);
+    
+    channel = (sim_log_channel_t*)malloc(sizeof(sim_log_channel_t));
+    channel->name = newName;
+
+    channel->num_outputs = 0;
+    channel->size_outputs = DEFAULT_CHANNEL_SIZE;
+    channel->outputs = (FILE**)calloc(channel->size_outputs, sizeof(FILE*));
+
+    channel->num_callbacks = 0;
+    channel->size_callbacks = DEFAULT_CALLBACKS_SIZE;
+    channel->callbacks = (sim_log_callback_t**)calloc(channel->size_callbacks, sizeof(sim_log_callback_t*));
+
+    hash_table_insert(&channelTable, newName, channel);
+  }
+
+  // If the channel output table is full, double the size of
+  // channel->outputs.
+  if (channel->num_callbacks == channel->size_callbacks) {
+    channel->size_callbacks *= 2;
+    channel->callbacks = (sim_log_callback_t**)realloc(channel->callbacks, sizeof(FILE*) * channel->size_callbacks);
+  }
+
+  callback = malloc(sizeof(*callback));
+  callback->handle = handle;
+  callback->data = data;
+
+  channel->callbacks[channel->num_callbacks] = callback;
+  channel->num_callbacks++;
+
+  sim_log_commit_change();
+}
+
+void sim_log_commit_change(void) {
   int i;
   for (i = 0; i < SIM_LOG_OUTPUT_COUNT; i++) {
     if (outputs[i].files != NULL) {
-      outputs[i].num = 0;
+      outputs[i].num_files = 0;
       free(outputs[i].files);
       outputs[i].files = NULL;
+    }
+
+    if (outputs[i].callbacks != NULL) {
+      outputs[i].num_callbacks = 0;
+      free(outputs[i].callbacks);
+      outputs[i].callbacks = NULL;
     }
   }
 }
 
 
-void sim_log_debug(uint16_t id, char* string, const char* format, ...) {
+void sim_log_debug(uint16_t id, const char* string, const char* format, ...) {
   va_list args;
   int i;
-  if (outputs[id].files == NULL) {
+  if (outputs[id].files == NULL || outputs[id].callbacks == NULL) {
     fillInOutput(id, string);
   }
-  for (i = 0; i < outputs[id].num; i++) {
+  for (i = 0; i < outputs[id].num_files; i++) {
     FILE* file = outputs[id].files[i];
     va_start(args, format);
-fprintf(file, "%s DEBUG (%i): ", sim_time_string(), (int)sim_node());
-    vfprintf(file, format, args);
+    fprintf(file, "D:%lu:%lf:", sim_node(), sim_time() / (double)sim_ticks_per_sec());
+    vfprintf(file, format, args); 
+    //va_end(args);
     fflush(file);
+  }
+  write_performed = (outputs[id].num_files > 0) || outputs[id].num_callbacks > 0;
+
+  if (outputs[id].num_callbacks > 0) {
+    char buffer[512];
+    int length;
+
+    va_start(args, format);
+    length = snprintf(buffer, sizeof(buffer), "D:%lu:%lf:", sim_node(), sim_time() / (double)sim_ticks_per_sec());
+    length += vsnprintf(buffer + length, sizeof(buffer) - length, format, args);
+    //va_end(args);
+
+    for (i = 0; i < outputs[id].num_callbacks; ++i) {
+      sim_log_callback_t* callback = outputs[id].callbacks[i];
+
+      callback->handle(callback->data, buffer, length);
+    }
   }
 }
 
-void sim_log_error(uint16_t id, char* string, const char* format, ...) {
+void sim_log_error(uint16_t id, const char* string, const char* format, ...) {
   va_list args;
   int i;
-  if (outputs[id].files == NULL) {
+  if (outputs[id].files == NULL || outputs[id].callbacks == NULL) {
     fillInOutput(id, string);
   }
-  for (i = 0; i < outputs[id].num; i++) {
+  for (i = 0; i < outputs[id].num_files; i++) {
     FILE* file = outputs[id].files[i];
     va_start(args, format);
-    fprintf(file, "ERROR (%i): ", (int)sim_node());
+    fprintf(file, "E:%lu:%lf:", sim_node(), sim_time() / (double)sim_ticks_per_sec());
     vfprintf(file, format, args);
+    //va_end(args);
     fflush(file);
+  }
+  write_performed = (outputs[id].num_files > 0) || outputs[id].num_callbacks > 0;
+
+  if (outputs[id].num_callbacks > 0) {
+    char buffer[512];
+    int length;
+
+    va_start(args, format);
+    length = snprintf(buffer, sizeof(buffer), "E:%lu:%lf:", sim_node(), sim_time() / (double)sim_ticks_per_sec());
+    length += vsnprintf(buffer + length, sizeof(buffer) - length, format, args);
+    //va_end(args);
+
+    for (i = 0; i < outputs[id].num_callbacks; ++i) {
+      sim_log_callback_t* callback = outputs[id].callbacks[i];
+
+      callback->handle(callback->data, buffer, length);
+    }
   }
 }
 
-void sim_log_debug_clear(uint16_t id, char* string, const char* format, ...) {
+void sim_log_debug_clear(uint16_t id, const char* string, const char* format, ...) {
   va_list args;
   int i;
-  if (outputs[id].files == NULL) {
+  if (outputs[id].files == NULL || outputs[id].callbacks == NULL) {
     fillInOutput(id, string);
   }
-  for (i = 0; i < outputs[id].num; i++) {
+  for (i = 0; i < outputs[id].num_files; i++) {
     FILE* file = outputs[id].files[i];
     va_start(args, format);
     vfprintf(file, format, args);
+    //va_end(args);
     fflush(file);
+  }
+  write_performed = (outputs[id].num_files > 0) || outputs[id].num_callbacks > 0;
+
+  if (outputs[id].num_callbacks > 0) {
+    char buffer[512];
+    int length;
+
+    va_start(args, format);
+    length = vsnprintf(buffer, sizeof(buffer), format, args);
+    //va_end(args);
+
+    for (i = 0; i < outputs[id].num_callbacks; ++i) {
+      sim_log_callback_t* callback = outputs[id].callbacks[i];
+
+      callback->handle(callback->data, buffer, length);
+    }
   }
 }
 
-void sim_log_error_clear(uint16_t id, char* string, const char* format, ...) {
+void sim_log_error_clear(uint16_t id, const char* string, const char* format, ...) {
   va_list args;
   int i;
-  if (outputs[id].files == NULL) {
+  if (outputs[id].files == NULL || outputs[id].callbacks == NULL) {
     fillInOutput(id, string);
   }
-  for (i = 0; i < outputs[id].num; i++) {
+  for (i = 0; i < outputs[id].num_files; i++) {
     FILE* file = outputs[id].files[i];
     va_start(args, format);
     vfprintf(file, format, args);
+    //va_end(args);
     fflush(file);
+  }
+  write_performed = (outputs[id].num_files > 0) || outputs[id].num_callbacks > 0;
+
+  if (outputs[id].num_callbacks > 0) {
+    char buffer[512];
+    int length;
+
+    va_start(args, format);
+    length = vsnprintf(buffer, sizeof(buffer), format, args);
+    //va_end(args);
+
+    for (i = 0; i < outputs[id].num_callbacks; ++i) {
+      sim_log_callback_t* callback = outputs[id].callbacks[i];
+
+      callback->handle(callback->data, buffer, length);
+    }
   }
 }
 
 /* This is the sdbm algorithm, taken from
    http://www.cs.yorku.ca/~oz/hash.html -pal */
-static unsigned int sim_log_hash(void* key) {
-  char* str = (char*)key;
+static unsigned int sim_log_hash(const void* key) {
+  const char* str = (const char*)key;
   unsigned int hashVal = 0;
   int hashChar;
   
@@ -314,6 +494,6 @@ static unsigned int sim_log_hash(void* key) {
   return hashVal;
 }
 
-static int sim_log_eq(void* key1, void* key2) {
-  return strcmp((char*)key1, (char*)key2) == 0;
+static int sim_log_eq(const void* key1, const void* key2) {
+  return strcmp((const char*)key1, (const char*)key2) == 0;
 }

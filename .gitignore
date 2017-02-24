@@ -1,5 +1,7 @@
 *.[oa]
+*.so
 *~
+*.pyo
 *.pyc
 *.class
 #*#
@@ -20,6 +22,7 @@ appdoc
 
 # Ignore TOSSIM products
 simbuild
+app.xml
 TOSSIM.py
 _TOSSIMmodule.so
 _TOSSIM.dll
@@ -28,4 +31,6 @@ _TOSSIM.dll
 
 # Ignore application byproducts
 apps/BaseStation15.4/seriallisten15-4
-
+apps/*/build
+apps/*/TOSSIM.py
+tests/*/build

@@ -38,26 +38,62 @@
 
 package net.tinyos.tools;
 
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.TimeZone;
+
 import net.tinyos.message.*;
 import net.tinyos.packet.*;
 import net.tinyos.util.*;
 
 public class PrintfClient implements MessageListener {
 
-  private MoteIF moteIF;
+  private final MoteIF moteIF;
+
+  private static final SimpleDateFormat fmt = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss.SSS");
+
+  private boolean print_datetime;
+
+  static {
+    fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
+  }
   
   public PrintfClient(MoteIF moteIF) {
     this.moteIF = moteIF;
     this.moteIF.registerListener(new PrintfMsg(), this);
+
+    this.print_datetime = true;
   }
 
   public void messageReceived(int to, Message message) {
+    Date time = Calendar.getInstance().getTime();
+
     PrintfMsg msg = (PrintfMsg)message;
+
     for(int i=0; i<PrintfMsg.totalSize_buffer(); i++) {
-      char nextChar = (char)(msg.getElement_buffer(i));
-      if(nextChar != 0)
+      char nextChar = (char)msg.getElement_buffer(i);
+
+      if (this.print_datetime)
+      {
+        String timeStamp = this.fmt.format(time);
+        System.out.print(timeStamp);
+        System.out.print(":");
+        this.print_datetime = false;
+      }
+
+      if (nextChar != 0 && nextChar != '\r')
+      {
         System.out.print(nextChar);
+
+        if (nextChar == '\n')
+        {
+          this.print_datetime = true;
+        }
+      }
     }
+
+    System.out.flush();
   }
   
   private static void usage() {
@@ -81,7 +117,7 @@ public class PrintfClient implements MessageListener {
     else {
       phoenix = BuildSource.makePhoenix(source, PrintStreamMessenger.err);
     }
-    System.out.print(phoenix);
+    System.out.println(phoenix);
     MoteIF mif = new MoteIF(phoenix);
     PrintfClient client = new PrintfClient(mif);
   }

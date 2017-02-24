@@ -58,19 +58,37 @@
 #define dbgerror_clear(s, ...)
 #endif
 
+#ifndef TOSSIM_NO_SIM_DEBUG
+#define simdbg(s, ...) sim_log_debug(unique("TOSSIM.debug"), s, __VA_ARGS__)
+#define simdbg_clear(s, ...) sim_log_debug_clear(unique("TOSSIM.debug"), s, __VA_ARGS__)
+#define simdbgerror(s, ...) sim_log_error(unique("TOSSIM.debug"), s, __VA_ARGS__)
+#define simdbgerror_clear(s, ...) sim_log_error_clear(unique("TOSSIM.debug"), s, __VA_ARGS__)
+#else
+#define simdbg(s, ...)
+#define simdbg_clear(s, ...)
+#define simdbgerror(s, ...)
+#define simdbgerror_clear(s, ...)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void sim_log_init();
-void sim_log_add_channel(char* output, FILE* file);
-bool sim_log_remove_channel(char* output, FILE* file);
-void sim_log_commit_change();
+void sim_log_init(void);
+void sim_log_free(void);
 
-void sim_log_debug(uint16_t id, char* string, const char* format, ...);
-void sim_log_error(uint16_t id, char* string, const char* format, ...);
-void sim_log_debug_clear(uint16_t id, char* string, const char* format, ...);
-void sim_log_error_clear(uint16_t id, char* string, const char* format, ...);
+void sim_log_add_channel(const char* output, FILE* file);
+bool sim_log_remove_channel(const char* output, FILE* file);
+void sim_log_add_callback(const char* name, void (*handle)(void* data, const char* line, size_t line_length), void* data);
+void sim_log_commit_change(void);
+
+void sim_log_debug(uint16_t id, const char* string, const char* format, ...) __attribute__ ((__format__(printf, 3, 4)));
+void sim_log_error(uint16_t id, const char* string, const char* format, ...) __attribute__ ((__format__(printf, 3, 4)));
+void sim_log_debug_clear(uint16_t id, const char* string, const char* format, ...) __attribute__ ((__format__(printf, 3, 4)));
+void sim_log_error_clear(uint16_t id, const char* string, const char* format, ...) __attribute__ ((__format__(printf, 3, 4)));
+
+void sim_log_reset_flag(void);
+bool sim_log_test_flag(void);
 
 #ifdef __cplusplus
 }

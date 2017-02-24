@@ -39,180 +39,194 @@
 
 // $Id: tossim.c,v 1.7 2010-06-29 22:07:51 scipio Exp $
 
-
-#include <stdint.h>
-#include <tossim.h>
-#include <sim_tossim.h>
-#include <sim_mote.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <hashtable.h>
+#include <stdint.h>
+
+#include <algorithm>
+#include <stdexcept>
+
+#include <tossim.h>
+#include <sim_tossim.h>
+#include <sim_mote.h>
+#include <sim_event_queue.h>
+#include <sim_noise.h>
 
 #include <mac.c>
 #include <radio.c>
 #include <packet.c>
-#include <sim_noise.h>
 
 uint16_t TOS_NODE_ID = 1;
 
-Variable::Variable(char* str, char* formatStr, int array, int which) {
-  name = str;
-  format = formatStr;
-  isArray = array;
-  mote = which;
-  
-  int sLen = strlen(name);
-  realName = (char*)malloc(sLen + 1);
-  memcpy(realName, name, sLen + 1);
-  realName[sLen] = 0;
+static bool python_event_called = false;
 
-  for (int i = 0; i < sLen; i++) {
-    if (realName[i] == '.') {
-      realName[i] = '$';
-    }
+Variable::Variable(const std::string& name, const char* formatStr, bool array, int which)
+  : realName(name)
+  , format(formatStr)
+
+  , mote(which)
+  , isArray(array)
+{
+  // Names can come in two formats:
+  // nongeneric: "ActiveMessageAddressC$addr"
+  // generic: "/*AlarmCounterMilliP.Atm128AlarmAsyncC.Atm128AlarmAsyncP*/Atm128AlarmAsyncP$0$set"
+  // We need to change the "." to "$" in parts after the /*...*/ part
+
+  size_t last_slash_pos = realName.find_last_of('/');
+  if (last_slash_pos == std::string::npos)
+  {
+    last_slash_pos = 0;
   }
 
-  //  printf("Creating %s realName: %s format: %s %s\n", name, realName, formatStr, array? "[]":"");
+  std::replace(realName.begin() + last_slash_pos, realName.end(), '.', '$');
 
-  if (sim_mote_get_variable_info(mote, realName, &ptr, &len) == 0) {
-    data = (char*)malloc(len + 1);
+  if (sim_mote_get_variable_info(mote, realName.c_str(), &ptr, &len) == 0) {
+    data.reset(new uint8_t[len + 1]);
     data[len] = 0;
   }
   else {
-    printf("Could not find variable %s\n", realName);
-    data = NULL;
-    ptr = NULL;
+    data = nullptr;
+    ptr = nullptr;
   }
-  printf("Allocated variable %s\n", realName);
 }
 
 Variable::~Variable() {
-  printf("Freeing variable %s\n", realName);
-  free(data);
-  free(realName);
 }
 
-/* This is the sdbm algorithm, taken from
-   http://www.cs.yorku.ca/~oz/hash.html -pal */
-static unsigned int tossim_hash(void* key) {
-  char* str = (char*)key;
-  unsigned int hashVal = 0;
-  int c;
-  
-  while ((c = *str++))
-    hashVal = c + (hashVal << 6) + (hashVal << 16) - hashVal;
-  
-  return hashVal;
+void Variable::update() {
+  if (data != nullptr && ptr != nullptr) {
+    // Copy the data from the variable (ptr) into our local data (data).
+    memcpy(data.get(), ptr, len);
+  }
 }
-
-static int tossim_hash_eq(void* key1, void* key2) {
-  return strcmp((char*)key1, (char*)key2) == 0;
-}
-
 
 variable_string_t Variable::getData() {
-  if (data != NULL && ptr != NULL) {
-    str.ptr = data;
-    str.type = format;
+  variable_string_t str;
+  if (data != nullptr && ptr != nullptr) {
+    str.ptr = data.get();
+    str.type = format.c_str();
     str.len = len;
     str.isArray = isArray;
-    //    printf("Getting %s %s %s\n", format, isArray? "[]":"", name);
-    memcpy(data, ptr, len);
+
+    update();
   }
   else {
-    str.ptr = (char*)"<no such variable>";
-    str.type = (char*)"<no such variable>";
+    str.ptr = const_cast<char*>("<no such variable>");
+    str.type = "<no such variable>";
     str.len = strlen("<no such variable>");
-    str.isArray = 0;
+    str.isArray = false;
   }
   return str;
 }
 
-Mote::Mote(nesc_app_t* n) {
-  app = n;
-  varTable = create_hashtable(128, tossim_hash, tossim_hash_eq);
+Mote::Mote(const NescApp* n) : app(n) {
 }
 
-Mote::~Mote(){}
+Mote::~Mote() {
+}
 
-unsigned long Mote::id() {
+unsigned long Mote::id() const noexcept {
   return nodeID;
 }
 
-long long int Mote::euid() {
+long long int Mote::euid() const noexcept {
   return sim_mote_euid(nodeID);
 }
 
-void Mote::setEuid(long long int val) {
+void Mote::setEuid(long long int val) noexcept {
   sim_mote_set_euid(nodeID, val);
 }
 
-long long int Mote::bootTime() {
+long long int Mote::tag() const noexcept {
+  return sim_mote_tag(nodeID);
+}
+
+void Mote::setTag(long long int val) noexcept {
+  sim_mote_set_tag(nodeID, val);
+}
+
+long long int Mote::bootTime() const noexcept {
   return sim_mote_start_time(nodeID);
 }
 
-void Mote::bootAtTime(long long int time) {
+void Mote::bootAtTime(long long int time) noexcept {
   sim_mote_set_start_time(nodeID, time);
   sim_mote_enqueue_boot_event(nodeID);
 }
 
-bool Mote::isOn() {
+bool Mote::isOn() noexcept {
   return sim_mote_is_on(nodeID);
 }
 
-void Mote::turnOff() {
+void Mote::turnOff() noexcept {
   sim_mote_turn_off(nodeID);
 }
 
-void Mote::turnOn() {
+void Mote::turnOn() noexcept {
   sim_mote_turn_on(nodeID);
 }
 
-void Mote::setID(unsigned long val) {
+void Mote::setID(unsigned long val) noexcept {
   nodeID = val;
 }
 
-Variable* Mote::getVariable(char* name) {
-  char* typeStr = (char*)"";
-  int isArray;
-  Variable* var;
-  
-  var = (Variable*)hashtable_search(varTable, name);
-  if (var == NULL) {
+std::shared_ptr<Variable> Mote::getVariable(const char* name_cstr) {
+  std::shared_ptr<Variable> var;
+
+  std::string name(name_cstr);
+
+  auto find = varTable.find(name);
+
+  if (find == varTable.end()) {
+    const char* typeStr = "";
+    bool isArray = false;
     // Could hash this for greater efficiency,
     // but that would either require transformation
     // in Tossim class or a more complex typemap.
-    if (app != NULL) {
-      for (int i = 0; i < app->numVariables; i++) {
-	if(strcmp(name, app->variableNames[i]) == 0) {
-	  typeStr = app->variableTypes[i];
-	  isArray = app->variableArray[i];
-	  break;
-	}
+    if (app != nullptr) {
+      for (unsigned int i = 0; i < app->numVariables; i++) {
+        if (name == app->variableNames[i]) {
+          typeStr = app->variableTypes[i].c_str();
+          isArray = app->variableArray[i];
+          break;
+        }
       }
     }
-    //  printf("Getting variable %s of type %s %s\n", name, typeStr, isArray? "[]" : "");
-    var = new Variable(name, typeStr, isArray, nodeID);
-    hashtable_insert(varTable, name, var);
+
+    var = std::make_shared<Variable>(name, typeStr, isArray, nodeID);
+
+    varTable.emplace(std::move(name), var);
   }
+  else {
+    var = find->second;
+  }
+
   return var;
 }
 
+void Mote::reserveNoiseTraces(size_t num_traces) {
+  sim_noise_reserve(nodeID, num_traces);
+}
+
 void Mote::addNoiseTraceReading(int val) {
-  sim_noise_trace_add(id(), (char)val);
+  sim_noise_trace_add(nodeID, static_cast<char>(val));
 }
 
 void Mote::createNoiseModel() {
-  sim_noise_create_model(id());
+  sim_noise_create_model(nodeID);
 }
 
 int Mote::generateNoise(int when) {
-  return (int)sim_noise_generate(id(), sim_mote_get_radio_channel(id()), when);   // return (int)sim_noise_generate(id(), when);
+  return static_cast<int>(sim_noise_generate(nodeID, sim_mote_get_radio_channel(nodeID), when));
 }
 
-Tossim::Tossim(nesc_app_t* n) {
-  app = n;
+
+Tossim::Tossim(NescApp n)
+  : app(std::move(n))
+  , motes(TOSSIM_MAX_NODES)
+  , duration_started(false)
+{
   init();
 }
 
@@ -220,80 +234,217 @@ Tossim::~Tossim() {
   sim_end();
 }
 
-void Tossim::init() {
+void Tossim::init(){
   sim_init();
-  motes = (Mote**)malloc(sizeof(Mote*) * (TOSSIM_MAX_NODES + 1));
-  memset(motes, 0, sizeof(Mote*) * TOSSIM_MAX_NODES);
 }
 
-long long int Tossim::time() {
+long long int Tossim::time() const noexcept {
   return sim_time();
 }
 
-long long int Tossim::ticksPerSecond() {
+double Tossim::timeInSeconds() const noexcept {
+  return time() / static_cast<double>(ticksPerSecond());
+}
+
+long long int Tossim::ticksPerSecond() noexcept {
   return sim_ticks_per_sec();
 }
 
-char* Tossim::timeStr() {
-  sim_print_now(timeBuf, 256);
+const char* Tossim::timeStr() noexcept {
+  sim_print_now(timeBuf, 128);
   return timeBuf;
 }
 
-void Tossim::setTime(long long int val) {
+void Tossim::setTime(long long int val) noexcept {
   sim_set_time(val);
 }
 
-Mote* Tossim::currentNode() {
+Mote* Tossim::currentNode() noexcept {
   return getNode(sim_node());
 }
 
-Mote* Tossim::getNode(unsigned long nodeID) {
-  if (nodeID > TOSSIM_MAX_NODES) {
-    nodeID = TOSSIM_MAX_NODES;
-    // log an error, asked for an invalid node
+Mote* Tossim::getNode(unsigned long nodeID) noexcept {
+  if (nodeID >= TOSSIM_MAX_NODES) {
+    throw std::runtime_error("Asked for an invalid node id. You may need to increase the maximum number of nodes.");
   }
-  else {
-    if (motes[nodeID] == NULL) {
-      motes[nodeID] = new Mote(app);
-      if (nodeID == TOSSIM_MAX_NODES) {
-	motes[nodeID]->setID(0xffff);
-      }
-      else {
-	motes[nodeID]->setID(nodeID);
-      }
+
+  if (motes[nodeID] == nullptr) {
+    motes[nodeID].reset(new Mote(&app));
+
+    if (nodeID == TOSSIM_MAX_NODES) {
+      nodeID = 0xFFFF;
     }
-    return motes[nodeID];
+
+    motes[nodeID]->setID(nodeID);
   }
+  return motes[nodeID].get();
 }
 
-void Tossim::setCurrentNode(unsigned long nodeID) {
+void Tossim::setCurrentNode(unsigned long nodeID) noexcept {
   sim_set_node(nodeID);
 }
 
-void Tossim::addChannel(char* channel, FILE* file) {
+void Tossim::addChannel(const char* channel, FILE* file) {
   sim_add_channel(channel, file);
 }
 
-bool Tossim::removeChannel(char* channel, FILE* file) {
+bool Tossim::removeChannel(const char* channel, FILE* file) {
   return sim_remove_channel(channel, file);
+}
+
+typedef struct handle_tossim_callback_data {
+  handle_tossim_callback_data(std::function<void(const char*, size_t)> provided_callback)
+    : callback(std::move(provided_callback))
+  {
+  }
+
+  const std::function<void(const char*, size_t)> callback;
+} handle_tossim_callback_data_t;
+
+static void handle_tossim_callback(void* void_data, const char* line, size_t line_length)
+{
+  handle_tossim_callback_data_t* data = static_cast<handle_tossim_callback_data_t*>(void_data);
+
+  data->callback(line, line_length);
+}
+
+void Tossim::addCallback(const char* channel, std::function<void(const char*, size_t)> callback) {
+  sim_add_callback(channel, &handle_tossim_callback, new handle_tossim_callback_data_t(std::move(callback)));
 }
 
 void Tossim::randomSeed(int seed) {
   return sim_random_seed(seed);
 }
 
+typedef struct handle_python_event_data {
+  handle_python_event_data(Tossim* tossim, std::function<void(double)> provided_event_callback)
+    : self(tossim)
+    , event_callback(std::move(provided_event_callback))
+  {
+  }
+
+  Tossim* const self;
+
+  const std::function<void(double)> event_callback;
+} handle_python_event_data_t;
+
+static void handle_python_event(void* void_event)
+{
+  sim_event_t* event = static_cast<sim_event_t*>(void_event);
+
+  std::unique_ptr<handle_python_event_data_t> data(static_cast<handle_python_event_data_t*>(event->data));
+
+  // Set to nullptr to avoid a double free from TOSSIM trying to clean up the sim event
+  event->data = nullptr;
+
+  python_event_called = true;
+
+  data->event_callback(data->self->timeInSeconds());
+}
+
+void Tossim::register_event_callback(std::function<void(double)> callback, double event_time) {
+  sim_register_event(
+    static_cast<sim_time_t>(event_time * ticksPerSecond()),
+    &handle_python_event,
+    new handle_python_event_data_t(this, std::move(callback))
+  );
+}
+
 bool Tossim::runNextEvent() {
   return sim_run_next_event();
 }
 
-MAC* Tossim::mac() {
-  return new MAC();
+void Tossim::triggerRunDurationStart() {
+  if (!duration_started)
+  {
+    duration_started = true;
+    duration_started_at = sim_time();
+  }
 }
 
-Radio* Tossim::radio() {
-  return new Radio();
+long long int Tossim::runAllEventsWithTriggeredMaxTime(
+  double duration,
+  double duration_upper_bound,
+  std::function<bool()> continue_events)
+{
+  const long long int duration_ticks = static_cast<long long int>(ceil(duration * ticksPerSecond()));
+  const long long int duration_upper_bound_ticks = static_cast<long long int>(ceil(duration_upper_bound * ticksPerSecond()));
+  long long int event_count = 0;
+  bool process_callback = true;
+
+  // We can skip calling the continue_events predicate if no log info was outputted, or no python callback occurred
+  while (
+      (!duration_started || sim_time() < (duration_started_at + duration_ticks)) &&
+      (sim_time() < duration_upper_bound_ticks) &&
+      ((!process_callback && !python_event_called) || continue_events())
+    )
+  {
+    // Reset the python event called flag as we have no handled it
+    python_event_called = false;
+
+    if (!runNextEvent())
+    {
+      // Use negative to signal no more events
+      event_count = -event_count;
+      break;
+    }
+
+    process_callback = sim_log_test_flag();
+
+    event_count += 1;
+  }
+
+  return event_count;
 }
 
-Packet* Tossim::newPacket() {
-  return new Packet();
+long long int Tossim::runAllEventsWithTriggeredMaxTimeAndCallback(
+    double duration,
+    double duration_upper_bound,
+    std::function<bool()> continue_events,
+    std::function<void(long long int)> callback)
+{
+  const long long int duration_ticks = static_cast<long long int>(ceil(duration * ticksPerSecond()));
+  const long long int duration_upper_bound_ticks = static_cast<long long int>(ceil(duration_upper_bound * ticksPerSecond()));
+  long long int event_count = 0;
+  bool process_callback = true;
+
+  // We can skip calling the continue_events predicate if no log info was outputted, or no python callback occurred
+  while (
+      (!duration_started || sim_time() < (duration_started_at + duration_ticks)) &&
+      (sim_time() < duration_upper_bound_ticks) &&
+      ((!process_callback && !python_event_called) || continue_events())
+    )
+  {
+    // Reset the python event called flag as we have no handled it
+    python_event_called = false;
+
+    if (!runNextEvent())
+    {
+      // Use negative to signal no more events
+      event_count = -event_count;
+      break;
+    }
+
+    process_callback = sim_log_test_flag();
+
+    if (process_callback) {
+      callback(event_count);
+    }
+
+    event_count += 1;
+  }
+
+  return event_count;
+}
+
+std::shared_ptr<MAC> Tossim::mac() {
+  return std::make_shared<MAC>();
+}
+
+std::shared_ptr<Radio> Tossim::radio() {
+  return std::make_shared<Radio>();
+}
+
+std::shared_ptr<Packet> Tossim::newPacket() {
+  return std::make_shared<Packet>();
 }

@@ -42,348 +42,551 @@
 
 %module TOSSIM
 
+%include <std_shared_ptr.i>
+%shared_ptr(MAC)
+%shared_ptr(Radio)
+%shared_ptr(Packet)
+%shared_ptr(Variable)
+
 %{
 #include <memory.h>
 #include <tossim.h>
+#include <sim_noise.h>
 
-enum {
-  PRIMITIVE_INTEGER      = 0,
-  PRIMITIVE_FLOAT   = 1,
-  PRIMITIVE_UNKNOWN = 2
+#include <functional>
+
+#define LENGTH_TYPE(NAME) \
+if (strcmp(type, #NAME) == 0) { \
+    return sizeof(NAME); \
+}
+
+size_t lengthOfType(const char* type) {
+    LENGTH_TYPE(uint8_t)
+    LENGTH_TYPE(uint16_t)
+    LENGTH_TYPE(uint32_t)
+    LENGTH_TYPE(int8_t)
+    LENGTH_TYPE(int16_t)
+    LENGTH_TYPE(int32_t)
+    LENGTH_TYPE(char)
+    LENGTH_TYPE(short)
+    LENGTH_TYPE(int)
+    LENGTH_TYPE(long)
+    LENGTH_TYPE(signed char)
+    LENGTH_TYPE(unsigned char)
+    LENGTH_TYPE(unsigned short)
+    LENGTH_TYPE(unsigned int)
+    LENGTH_TYPE(unsigned long)
+    LENGTH_TYPE(float)
+    LENGTH_TYPE(double)
+
+    //printf("Unknown type (size) '%s'\n", type);
+
+    return 1;
+}
+
+#define CONVERT_TYPE(NAME, CONVERT_FUNCTION) \
+if (strcmp(type, #NAME) == 0) { \
+    NAME val; \
+    memcpy(&val, ptr, sizeof(NAME)); \
+    return CONVERT_FUNCTION(val); \
+}
+
+PyObject* valueFromScalar(const char* type, const void* ptr, size_t len) {
+    CONVERT_TYPE(uint8_t, PyLong_FromUnsignedLong)
+    CONVERT_TYPE(uint16_t, PyLong_FromUnsignedLong)
+    CONVERT_TYPE(uint32_t, PyLong_FromUnsignedLong)
+    CONVERT_TYPE(int8_t, PyLong_FromLong)
+    CONVERT_TYPE(int16_t, PyLong_FromLong)
+    CONVERT_TYPE(int32_t, PyLong_FromLong)
+    CONVERT_TYPE(char, PyLong_FromLong)
+    CONVERT_TYPE(short, PyLong_FromLong)
+    CONVERT_TYPE(int, PyLong_FromLong)
+    CONVERT_TYPE(long, PyLong_FromLong)
+    CONVERT_TYPE(unsigned char, PyLong_FromUnsignedLong)
+    CONVERT_TYPE(unsigned short, PyLong_FromUnsignedLong)
+    CONVERT_TYPE(unsigned int, PyLong_FromUnsignedLong)
+    CONVERT_TYPE(unsigned long, PyLong_FromUnsignedLong)
+    CONVERT_TYPE(float, PyFloat_FromDouble)
+    CONVERT_TYPE(double, PyFloat_FromDouble)
+
+    //printf("Unknown type (value) '%s'\n", type);
+
+#if PY_VERSION_HEX < 0x03000000
+    return PyString_FromStringAndSize((const char*)ptr, len);
+#else
+    return PyUnicode_DecodeASCII((const char*)ptr, len, "strict");
+#endif
+}
+
+PyObject* listFromArray(const char* type, const void* ptr, int len) {
+    size_t elementLen = lengthOfType(type);
+    PyObject* list = PyList_New(0);
+    //printf("Generating list of %s\n", type);
+    for (const uint8_t* tmpPtr = (const uint8_t*)ptr; tmpPtr < (const uint8_t*)ptr + len; tmpPtr += elementLen) {
+        PyList_Append(list, valueFromScalar(type, tmpPtr, elementLen));    
+    }
+    return list;
+}
+
+// From: https://stackoverflow.com/questions/11516809/c-back-end-call-the-python-level-defined-callbacks-with-swig-wrapper#new-answer
+class PyCallback
+{
+private:
+    PyObject *func;
+private:
+    PyCallback& operator=(const PyCallback&) = delete; // Not allowed
+public:
+    PyCallback(PyCallback&& o) noexcept : func(o.func)
+    {
+        o.func = NULL;
+    }
+    PyCallback(const PyCallback& o) noexcept : func(o.func)
+    {
+        Py_XINCREF(func);
+    }
+    PyCallback(PyObject *pfunc) : func(pfunc)
+    {
+        if (!pfunc || Py_None == pfunc || !PyCallable_Check(pfunc))
+        {
+            PyErr_SetString(PyExc_TypeError, "Requires a callable as a parameter.");
+            throw std::runtime_error("Python exception occurred");
+        }
+        Py_INCREF(func);
+    }
+    ~PyCallback() noexcept
+    {
+        Py_XDECREF(func);
+    }
+
+    bool operator()() const {
+        PyObject *result = PyObject_CallObject(func, NULL);
+
+        if (result != NULL)
+        {
+            const bool bool_result = PyObject_IsTrue(result);
+
+            Py_DECREF(result);
+
+            return bool_result;
+        }
+        else
+        {
+            throw std::runtime_error("Python exception occurred");
+        }
+    }
+
+    void operator()(double t) const {
+        PyObject *args = PyTuple_New(1);
+        PyTuple_SetItem(args, 0, PyFloat_FromDouble(t));
+
+        PyObject *result = PyObject_CallObject(func, args);
+
+        Py_DECREF(args);
+
+        if (result != NULL)
+        {
+            Py_DECREF(result);
+        }
+        else
+        {
+            throw std::runtime_error("Python exception occurred");
+        }
+    }
+
+    void operator()(long long int i) const {
+        PyObject *args = PyTuple_New(1);
+        PyTuple_SetItem(args, 0, PyLong_FromLongLong(i));
+
+        PyObject *result = PyObject_CallObject(func, args);
+
+        Py_DECREF(args);
+
+        if (result != NULL)
+        {
+            Py_DECREF(result);
+        }
+        else
+        {
+            throw std::runtime_error("Python exception occurred");
+        }
+    }
+
+    void operator()(const char* str, size_t length) const {
+#if PY_VERSION_HEX < 0x03000000
+        PyObject *pystring = PyString_FromStringAndSize(str, length);
+#else
+        PyObject *pystring = PyUnicode_FromStringAndSize(str, length);
+#endif
+        if (pystring == NULL) {
+            throw std::runtime_error("Bad string");
+        }
+
+        PyObject *args = PyTuple_New(1);
+        PyTuple_SetItem(args, 0, pystring);
+
+        PyObject *result = PyObject_CallObject(func, args);
+
+        Py_DECREF(args);
+
+        if (result != NULL)
+        {
+            Py_DECREF(result);
+        }
+        else
+        {
+            throw std::runtime_error("Python exception occurred");
+        }
+    }
 };
 
-int lengthOfType(char* type) {
-  if (strcmp(type, "uint8_t") == 0) {
-    return sizeof(uint8_t);
-  }
-  else if (strcmp(type, "uint16_t") == 0) {
-    return sizeof(uint16_t);
-  }
-  else if (strcmp(type, "uint32_t") == 0) {
-    return sizeof(uint32_t);
-  }
-  else if (strcmp(type, "int8_t") == 0) {
-    return sizeof(int8_t);
-  }
-  else if (strcmp(type, "int16_t") == 0) {
-    return sizeof(int16_t);
-  }
-  else if (strcmp(type, "int32_t") == 0) {
-    return sizeof(int32_t);
-  }
-  else if (strcmp(type, "char") == 0) {
-    return sizeof(char);
-  }
-  else if (strcmp(type, "short") == 0) {
-    return sizeof(short);
-  }
-  else if (strcmp(type, "int") == 0) {
-    return sizeof(int);
-  }
-  else if (strcmp(type, "long") == 0) {
-    return sizeof(long);
-  }
-  else if (strcmp(type, "unsigned char") == 0) {
-    return sizeof(unsigned char);
-  }
-  else if (strcmp(type, "unsigned short") == 0) {
-    return sizeof(unsigned short);
-  }
-  else if (strcmp(type, "unsigned int") == 0) {
-    return sizeof(unsigned int);
-  }
-  else if (strcmp(type, "unsigned long") == 0) {
-    return sizeof(unsigned long);
-  }
-  else if (strcmp(type, "float") == 0) {
-    return sizeof(float);
-  }
-  else if (strcmp(type, "double") == 0) {
-    return sizeof(double);
-  }
-  else {
-    return 1;
-  }
+FILE* object_to_file(PyObject* o)
+{
+#if PY_VERSION_HEX < 0x03000000
+    if (!PyFile_Check(o)) {
+        PyErr_SetString(PyExc_TypeError, "Requires a file as a parameter.");
+        return NULL;
+    }
+    return PyFile_AsFile(o);
+#else
+    int fileno = PyObject_AsFileDescriptor(o);
+    if (fileno == -1)
+    {
+        return NULL;
+    }
+
+    int fileno_dup = dup(fileno);
+    if (fileno_dup == -1)
+    {
+        PyErr_Format(PyExc_TypeError, "Failed to duplicate fileno with error %d.", errno);
+        return NULL;
+    }
+
+    FILE* result = fdopen(fileno_dup, "w");
+    if (result == NULL)
+    {
+        PyErr_SetString(PyExc_TypeError, "Failed to fdopen file.");
+        return NULL;
+    }
+
+    return result;
+#endif
 }
 
-int memoryToPrimitive(char* type, char* ptr, long* lval, double* dval) {
-  if (strcmp(type, "uint8_t") == 0) {
-    uint8_t val;
-    memcpy(&val, ptr, sizeof(uint8_t));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "uint16_t") == 0) {
-    uint16_t val;
-    memcpy(&val, ptr, sizeof(uint16_t));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "uint32_t") == 0) {
-    uint32_t val;
-    memcpy(&val, ptr, sizeof(uint32_t));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "int8_t") == 0) {
-    int8_t val;
-    memcpy(&val, ptr, sizeof(int8_t));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "int16_t") == 0) {
-    int16_t val;
-    memcpy(&val, ptr, sizeof(int16_t));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "int32_t") == 0) {
-    int32_t val;
-    memcpy(&val, ptr, sizeof(int32_t));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "char") == 0) {
-    long val;
-    memcpy(&val, ptr, sizeof(char));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "short") == 0) {
-    short val;
-    memcpy(&val, ptr, sizeof(short));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "int") == 0) {
-    int val;
-    memcpy(&val, ptr, sizeof(int));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "long") == 0) {
-    long val;
-    memcpy(&val, ptr, sizeof(long));
-    *lval = val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "unsigned char") == 0) {
-    unsigned char val;
-    memcpy(&val, ptr, sizeof(unsigned char));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "unsigned short") == 0) {
-    unsigned short val;
-    memcpy(&val, ptr, sizeof(unsigned short));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "unsigned int") == 0) {
-    unsigned int val;
-    memcpy(&val, ptr, sizeof(unsigned int));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "unsigned long") == 0) {
-    unsigned long val;
-    memcpy(&val, ptr, sizeof(unsigned long));
-    *lval = (long)val;
-    return PRIMITIVE_INTEGER;
-  }
-  else if (strcmp(type, "float") == 0) {
-    float val;
-    memcpy(&val, ptr, sizeof(float));
-    *dval = (double)val;
-    return PRIMITIVE_FLOAT;
-  }
-  else if (strcmp(type, "double") == 0) {
-    double val;
-    memcpy(&val, ptr, sizeof(double));
-    *dval = val;
-    return PRIMITIVE_FLOAT;
-  }
-  else {
-    return PRIMITIVE_UNKNOWN;
-  }
-}
-
-PyObject* valueFromScalar(char* type, char* ptr, int len) {
-  long lval;
-  double dval;
-  int rval = memoryToPrimitive(type, ptr, &lval, &dval);
-  switch(rval) {
-    case PRIMITIVE_INTEGER:
-      return PyInt_FromLong(lval);
-    case PRIMITIVE_FLOAT:
-      return PyFloat_FromDouble(dval);
-    case PRIMITIVE_UNKNOWN:
-    default:
-      return PyString_FromStringAndSize(ptr, len);
-  }
-}
-
-PyObject* listFromArray(char* type, char* ptr, int len) {
-  long lval;
-  double dval;
-  int elementLen = lengthOfType(type);
-  PyObject* list = PyList_New(0);
-  //printf("Generating list of %s\n", type);
-  for (char* tmpPtr = ptr; tmpPtr < ptr + len; tmpPtr += elementLen) {
-    PyList_Append(list, valueFromScalar(type, tmpPtr, elementLen));    
-  }
-  return list;
-}
 %}
 
 %include mac.i
 %include radio.i
 %include packet.i
 
-%typemap(python,in) FILE * {
-  if (!PyFile_Check($input)) {
-    PyErr_SetString(PyExc_TypeError, "Requires a file as a parameter.");
-    return NULL;
-  }
-  $1 = PyFile_AsFile($input);
-}
-
-%typemap(python,out) variable_string_t {
-  if ($1.isArray) {
-    //printf("Generating array %s\n", $1.type);
-    $result = listFromArray  ($1.type, $1.ptr, $1.len);
-  }
-  else {
-    //printf("Generating scalar %s\n", $1.type);
-    $result = valueFromScalar($1.type, $1.ptr, $1.len);
-  }
-  if ($result == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, "Error generating Python type from TinyOS variable.");
-  }
-}
-
-
-%typemap(python,in) nesc_app_t* {
-  if (!PyList_Check($input)) {
-    PyErr_SetString(PyExc_TypeError, "Requires a list as a parameter.");
-    return NULL;
-  }
-  else {
-    int size = PyList_Size($input);
-    int i = 0;
-    nesc_app_t* app;
-
-    if (size % 3 != 0) {
-      PyErr_SetString(PyExc_RuntimeError, "List must have 2*N elements.");
-      return NULL;
+#ifdef SWIGPYTHON
+// Need to convert from an object from python's "open" to a FILE* so that
+// functions that take FILE* objects are correctly handled
+%typemap(in) FILE * {
+    $1 = object_to_file($input);
+    if ($1 == NULL)
+    {
+        return NULL;
     }
+}
 
-    app = (nesc_app_t*)malloc(sizeof(nesc_app_t));
+%typemap(out) variable_string_t {
+    if ($1.isArray) {
+        $result = listFromArray($1.type, $1.ptr, $1.len);
+    }
+    else {
+        $result = valueFromScalar($1.type, $1.ptr, $1.len);
+    }
+    if ($result == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Error generating Python type from TinyOS variable.");
+    }
+}
 
-    app->numVariables = size / 3;
-    app->variableNames = (char**)malloc(sizeof(char*) * app->numVariables);
-    app->variableTypes = (char**)malloc(sizeof(char*) * app->numVariables);
-    app->variableArray = (int*)malloc(sizeof(int) * app->numVariables);
-
-    memset(app->variableNames, 0, sizeof(char*) * app->numVariables);
-    memset(app->variableTypes, 0, sizeof(char*) * app->numVariables);
-    memset(app->variableArray, 0, sizeof(int) * app->numVariables);
-
-    for (i = 0; i < app->numVariables; i++) {
-      PyObject* name = PyList_GetItem($input, 3 * i);
-      PyObject* array = PyList_GetItem($input, (3 * i) + 1);
-      PyObject* format = PyList_GetItem($input, (3 * i) + 2);
-      if (PyString_Check(name) && PyString_Check(format)) {
+%{
+bool fill_nesc_app(NescApp* app, int i, PyObject* name, PyObject* array, PyObject* format)
+{
+#if PY_VERSION_HEX < 0x03000000
+    if (PyString_Check(name) && PyString_Check(format) && PyString_Check(array)) {
         app->variableNames[i] = PyString_AsString(name);
         app->variableTypes[i] = PyString_AsString(format);
-        if (strcmp(PyString_AsString(array), "array") == 0) {
-          app->variableArray[i] = 1;
-          //printf("%s is an array\n", PyString_AsString(name));
-        }
-        else {
-          app->variableArray[i] = 0;
-          //printf("%s is a scalar\n", PyString_AsString(name));
-        }
-      }
-      else {
-        app->variableNames[i] = (char*)"<bad string>";
-        app->variableTypes[i] = (char*)"<bad string>";
-      }
-    }
+        app->variableArray[i] = (strcmp(PyString_AsString(array), "array") == 0);
 
-    $1 = app;
-  }
+        return true;
+    }
+    else {
+        PyErr_SetString(PyExc_RuntimeError, "bad string");
+        return false;
+    }
+#else
+    if (PyUnicode_Check(name) && PyUnicode_Check(format) && PyUnicode_Check(array)) {
+
+        PyObject* name_ascii = PyUnicode_AsASCIIString(name);
+        PyObject* format_ascii = PyUnicode_AsASCIIString(format);
+        PyObject* array_ascii = PyUnicode_AsASCIIString(array);
+
+        if (name_ascii == NULL || format_ascii == NULL || array_ascii == NULL)
+        {
+            Py_XDECREF(name_ascii);
+            Py_XDECREF(format_ascii);
+            Py_XDECREF(array_ascii);
+
+            PyErr_SetString(PyExc_RuntimeError, "bad string not ascii");
+            return false;
+        }
+
+        app->variableNames[i] = PyBytes_AsString(name_ascii);
+        app->variableTypes[i] = PyBytes_AsString(format_ascii);
+        app->variableArray[i] = (strcmp(PyBytes_AsString(array_ascii), "array") == 0);
+
+        Py_DECREF(name_ascii);
+        Py_DECREF(format_ascii);
+        Py_DECREF(array_ascii);
+        
+        return true;
+    }
+    else {
+        PyErr_SetString(PyExc_RuntimeError, "bad string");
+        return false;
+    }
+#endif
 }
 
-typedef struct var_string {
-  char* type;
-  char* ptr;
-  int len;
-  int isArray;
+%}
+
+%typemap(in) NescApp {
+    if (!PyList_Check($input)) {
+        PyErr_SetString(PyExc_TypeError, "Requires a list as a parameter.");
+        SWIG_fail;
+    }
+    else {
+        Py_ssize_t size = PyList_Size($input);
+        Py_ssize_t i = 0;
+
+        if (size < 0 || size % 3 != 0) {
+            PyErr_SetString(PyExc_RuntimeError, "List must have 3*N elements.");
+            SWIG_fail;
+        }
+
+        NescApp app(static_cast<unsigned int>(size) / 3);
+
+        for (i = 0; i < app.numVariables; i++) {
+            PyObject* name = PyList_GET_ITEM($input, 3 * i);
+            PyObject* array = PyList_GET_ITEM($input, (3 * i) + 1);
+            PyObject* format = PyList_GET_ITEM($input, (3 * i) + 2);
+            if (!fill_nesc_app(&app, i, name, array, format))
+            {
+                SWIG_fail;
+            }
+        }
+
+        $1 = std::move(app);
+    }
+}
+#endif
+
+%ignore variable_string;
+%ignore variable_string_t;
+typedef struct variable_string {
+    const char* type;
+    void* ptr;
+    int len;
+    bool isArray;
 } variable_string_t;
 
-typedef struct nesc_app {
-  int numVariables;
-  char** variableNames;
-  char** variableTypes;
-  int* variableArray;
-} nesc_app_t;
+%ignore NescApp;
+class NescApp {
+public:
+    NescApp(unsigned int size)
+        : numVariables(size)
+        , variableNames(size)
+        , variableTypes(size)
+        , variableArray(size)
+    {
+    }
+
+    unsigned int numVariables;
+    std::vector<std::string> variableNames;
+    std::vector<std::string> variableTypes;
+    std::vector<bool> variableArray;
+};
 
 class Variable {
  public:
-  Variable(char* name, char* format, int array, int mote);
-  ~Variable();
-  variable_string_t getData();  
+    Variable(const char* name, const char* format, int array, int mote);
+    ~Variable();
+    variable_string_t getData();  
 };
 
 class Mote {
+ protected:
+    Mote(const NescApp* app);
+    ~Mote();
+
  public:
-  Mote(nesc_app_t* app);
-  ~Mote();
-
-  unsigned long id();
+    unsigned long id() const noexcept;
   
-  long long int euid();
-  void setEuid(long long int id);
+    long long int euid() const noexcept;
+    void setEuid(long long int id) noexcept;
 
-  
-  long long int bootTime();
-  void bootAtTime(long long int time);
+    long long int tag() const noexcept;
+    void setTag(long long int tag) noexcept;
+    
+    long long int bootTime() const noexcept;
+    void bootAtTime(long long int time);
 
-  bool isOn();
-  void turnOff();
-  void turnOn();
-  Variable* getVariable(char* name);
+    bool isOn();
+    void turnOff();
+    void turnOn();
+    std::shared_ptr<Variable> getVariable(const char* name_cstr);
 
-  void addNoiseTraceReading(int val);
-  void createNoiseModel();
-  int generateNoise(int when);
+    void reserveNoiseTraces(size_t num_traces);
+    void addNoiseTraceReading(int val);
+    void createNoiseModel();
+    int generateNoise(int when);
+
+    %extend {
+        PyObject* addNoiseTraces(PyObject *traces)
+        {
+            if (!PyList_Check(traces)) {
+                PyErr_SetString(PyExc_TypeError, "Requires a list as a parameter.");
+                return NULL;
+            }
+
+            Py_ssize_t size = PyList_GET_SIZE(traces);
+
+            $self->reserveNoiseTraces(size);
+
+            for (Py_ssize_t i = 0; i != size; ++i)
+            {
+                PyObject* trace = PyList_GET_ITEM(traces, i);
+
+                long trace_int;
+
+                if (PyLong_Check(trace)) {
+                    trace_int = PyLong_AsLong(trace);
+                }
+                else if (PyInt_Check(trace)) {
+                    trace_int = PyInt_AsLong(trace);
+                }
+                else {
+                    PyErr_SetString(PyExc_TypeError, "Requires a list of ints as a parameter.");
+                    return NULL;
+                }
+
+                if (trace_int < NOISE_MIN || trace_int > NOISE_MAX) {
+                    PyErr_Format(PyExc_ValueError, "Noise needs to be in valid range [%d, %d] but was %ld.",
+                        NOISE_MIN, NOISE_MAX, trace_int);
+                    return NULL;
+                }
+
+                $self->addNoiseTraceReading(trace_int);
+            }
+
+            Py_RETURN_NONE;
+        }
+    }
 };
+
+%extend Tossim {
+    PyObject* addCallback(const char* channel, PyObject *callback) {
+        try
+        {
+            $self->addCallback(channel, PyCallback(callback));
+            Py_RETURN_NONE;
+        }
+        catch (std::runtime_error ex)
+        {
+            return NULL;
+        }
+    }
+
+    PyObject* register_event_callback(PyObject *callback, double current_time) {
+        try
+        {
+            $self->register_event_callback(PyCallback(callback), current_time);
+            Py_RETURN_NONE;
+        }
+        catch (std::runtime_error ex)
+        {
+            return NULL;
+        }
+    }
+
+    PyObject* runAllEventsWithTriggeredMaxTime(
+        double duration,
+        double duration_upper_bound,
+        PyObject *continue_events)
+    {
+        try
+        {
+            long long int result = $self->runAllEventsWithTriggeredMaxTime(
+                duration, duration_upper_bound, PyCallback(continue_events));
+            return PyLong_FromLongLong(result);
+        }
+        catch (std::runtime_error ex)
+        {
+            return NULL;
+        }
+    }
+
+    PyObject* runAllEventsWithTriggeredMaxTimeAndCallback(
+        double duration,
+        double duration_upper_bound,
+        PyObject *continue_events,
+        PyObject *callback)
+    {
+        try
+        {
+            long long int result = $self->runAllEventsWithTriggeredMaxTimeAndCallback(
+                duration, duration_upper_bound, PyCallback(continue_events), PyCallback(callback));
+            return PyLong_FromLongLong(result);
+        }
+        catch (std::runtime_error ex)
+        {
+            return NULL;
+        }
+    }
+}
 
 class Tossim {
  public:
-  Tossim(nesc_app_t* app);
-  ~Tossim();
-  
-  void init();
-  
-  long long int time();
-  long long int ticksPerSecond(); 
-  void setTime(long long int time);
-  char* timeStr();
+    Tossim(NescApp app);
+    ~Tossim();
+    
+    void init();
+    
+    long long int time() const noexcept;
+    double timeInSeconds() const noexcept;
+    static long long int ticksPerSecond() noexcept;
+    void setTime(long long int time) noexcept;
+    const char* timeStr() noexcept;
 
-  Mote* currentNode();
-  Mote* getNode(unsigned long nodeID);
-  void setCurrentNode(unsigned long nodeID);
+    Mote* currentNode() noexcept;
+    Mote* getNode(unsigned long nodeID) noexcept;
+    void setCurrentNode(unsigned long nodeID) noexcept;
 
-  void addChannel(char* channel, FILE* file);
-  bool removeChannel(char* channel, FILE* file);
-  void randomSeed(int seed);
+    void addChannel(const char* channel, FILE* file);
+    bool removeChannel(const char* channel, FILE* file);
+    void addCallback(const char* channel, std::function<void(const char*, size_t)> callback);
 
-  bool runNextEvent();
-  MAC* mac();
-  Radio* radio();
-  Packet* newPacket();
+    void randomSeed(int seed);
+
+    void register_event_callback(std::function<bool(double)> callback, double current_time);
+
+    bool runNextEvent();
+
+    void triggerRunDurationStart();
+
+    long long int runAllEventsWithTriggeredMaxTime(
+        double duration,
+        double duration_upper_bound,
+        std::function<bool()> continue_events);
+    long long int runAllEventsWithTriggeredMaxTimeAndCallback(
+        double duration,
+        double duration_upper_bound,
+        std::function<bool()> continue_events,
+        std::function<void(long long int)> callback);
+
+    std::shared_ptr<MAC> mac();
+    std::shared_ptr<Radio> radio();
+    std::shared_ptr<Packet> newPacket();
 };
-
-

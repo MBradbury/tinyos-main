@@ -59,14 +59,16 @@
 #define HEAP_H_INCLUDED
 
 typedef struct heap {
-  int size;
   void* data;
+  int size;
   int private_size;
 } heap_t;
 
 void init_heap(heap_t* heap);
-int heap_size(heap_t* heap);
-int heap_is_empty(heap_t* heap);
+void free_heap(heap_t* heap);
+
+int heap_size(const heap_t* heap);
+int heap_is_empty(const heap_t* heap);
 
 long long int heap_get_min_key(heap_t* heap);
 void* heap_peek_min_data(heap_t* heap);
