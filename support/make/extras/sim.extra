@@ -2,7 +2,7 @@
 
 export GCC=gcc
 GPP=g++ -std=gnu++11
-OPTFLAGS = -g -O0 -fno-strict-aliasing
+OPTFLAGS = -g -O0 -fno-strict-aliasing -DTOSSIM_NO_DEBUG
 LIBS = -lm -lstdc++
 PFLAGS += -DTOSSIM -fnesc-nido-tosnodes=700 -fnesc-simulate -fnesc-nido-motenumber='sim_node\(\)' -fnesc-gcc="$(GCC)"
 PFLAGS += -I%T/lib/tossim
