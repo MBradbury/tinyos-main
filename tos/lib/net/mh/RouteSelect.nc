@@ -1,26 +1,27 @@
 /*
- * Copyright (c) 2009 Stanford University.
+ * Copyright (c) 2012 Martin Cerveny
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
+ *
  * - Redistributions of source code must retain the above copyright
  *   notice, this list of conditions and the following disclaimer.
  * - Redistributions in binary form must reproduce the above copyright
  *   notice, this list of conditions and the following disclaimer in the
  *   documentation and/or other materials provided with the
  *   distribution.
- * - Neither the name of the Stanford University nor the names of
+ * - Neither the name of the copyright holders nor the names of
  *   its contributors may be used to endorse or promote products derived
  *   from this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL STANFORD
- * UNIVERSITY OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
  * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
@@ -29,25 +30,23 @@
  * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+
+#include "MH.h"
+
 /**
- * @author Wanja Hofer <wanja@cs.fau.de>
+ * Interface to a route selection for the Multihop Active Message layer (packet forwarding) engine.
+ *
+ * @author Martin Cerveny
  */
 
-configuration PlatformSerialC
-{
-	provides
-	{
-		interface StdControl;
-		interface UartStream;
-		interface UartByte;
-	}
-}
-implementation
-{
-        components Msp432UsciUartA0C as UartC;
-        components PlatformP;
+interface RouteSelect {
 
-	StdControl = PlatformP;
-	UartStream = UartC;
-	UartByte   = UartC;
+	/**
+	 * Ask the routing engine to fill a message with routing
+	 * information, in order to send it to its target.
+	 *
+	 * @param msg The message to be sent (mhpacket_header/L3 is filled)
+	 * @return The action that should be taken by the multihop engine. If MH_SEND is returned L2 destination must be set in msg.
+	 */
+	command mh_action_t selectRoute(message_t * msg);
 }

@@ -1,5 +1,7 @@
 /*
- * Copyright (c) 2016 Eric B. Decker
+ * Copyright (c) 2010-2011 Eric B. Decker
+ * Copyright (c) 2009 DEXMA SENSORS SL
+ * Copyright (c) 2005-2006 Arch Rock Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,70 +32,51 @@
  * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
  * OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Warning: many of these routines directly touch cpu registers
- * it is assumed that this is initilization code and interrupts are
- * off.
- *
- * @author Eric B. Decker
  */
 
-#include "hardware.h"
-#include "cpu_stack.h"
+/*
+ * SpiB1: SPI/USCI_B1.  Defaults to no DMA, sw SPI implementation.
+ * To utilize the DMA, via Msp430SpiB1DmaP define ENABLE_SPIB1_DMA.
+ *
+ * @author Jonathan Hui <jhui@archrock.com>
+ * @author Mark Hays
+ * @author Xavier Orduna <xorduna@dexmatech.com>
+ * @author Eric B. Decker <cire831@gmail.com>
+ */
 
-#ifndef noinit
-#define noinit	__attribute__ ((section(".noinit"))) 
-#endif
+#include "msp430usci.h"
 
-noinit uint32_t stack_size;
-
-module PlatformP {
+generic configuration Msp430SpiB1C() {
   provides {
-    interface Init;
-    interface Platform;
-    interface StdControl;
+    interface Resource;
+    interface ResourceRequested;
+    interface SpiByte;
+    interface SpiPacket;
   }
-  uses {
-    interface Init as PlatformPins;
-    interface Init as PlatformLeds;
-    interface Init as PlatformClock;
-    interface Init as PeripheralInit;
-    interface Stack;
-  }
+  uses interface Msp430SpiConfigure;
 }
 
 implementation {
-  command error_t Init.init() {
-//    call Stack.init();
-//    stack_size = call Stack.size();
 
-    call PlatformLeds.init();   // Initializes the Leds
-    call PeripheralInit.init();
-    return SUCCESS;
-  }
+  enum {
+    CLIENT_ID = unique(MSP430_SPI0_BUS),
+  };
 
+  //#ifdef ENABLE_SPIB1_DMA
+  //#warning "Enabling SPI DMA on USCIB1"
+  //components Msp430SpiDmaB1P as SpiP;
+  //#else
+  components Msp430SpiNoDmaB1P as SpiP;
+  //#endif
 
-  /*
-   * dummy StdControl for PlatformSerial.
-   */
-  command error_t StdControl.start() {
-    return SUCCESS;
-  }
+  Resource = SpiP.Resource[CLIENT_ID];
+  SpiByte = SpiP.SpiByte;
+  SpiPacket = SpiP.SpiPacket[CLIENT_ID];
+  Msp430SpiConfigure = SpiP.Msp430SpiConfigure[CLIENT_ID];
 
-  command error_t StdControl.stop() {
-    return SUCCESS;
-  }
-
-
-  /* T32 is a count down so negate it */
-  async command uint32_t Platform.usecsRaw()       { return -(TIMER32_1->VALUE); }
-  async command uint32_t Platform.usecsRawSize()   { return 32; }
-  async command uint32_t Platform.jiffiesRaw()     { return (TIMER_A0->R); }
-  async command uint32_t Platform.jiffiesRawSize() { return 16; }
-
-
-  /***************** Defaults ***************/
-  default command error_t PeripheralInit.init() {
-    return SUCCESS;
-  }
+  components new Msp430UsciB1C() as UsciC;
+  ResourceRequested = UsciC;
+  SpiP.ResourceConfigure[CLIENT_ID] <- UsciC.ResourceConfigure;
+  SpiP.UsciResource[CLIENT_ID] -> UsciC.Resource;
+  SpiP.UsciInterrupts -> UsciC.HplMsp430UsciInterrupts;
 }

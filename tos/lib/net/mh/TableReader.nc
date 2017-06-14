@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Eric B. Decker
+ * Copyright (c) 2012 Martin Cerveny
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -8,12 +8,10 @@
  *
  * - Redistributions of source code must retain the above copyright
  *   notice, this list of conditions and the following disclaimer.
- *
  * - Redistributions in binary form must reproduce the above copyright
  *   notice, this list of conditions and the following disclaimer in the
  *   documentation and/or other materials provided with the
  *   distribution.
- *
  * - Neither the name of the copyright holders nor the names of
  *   its contributors may be used to endorse or promote products derived
  *   from this software without specific prior written permission.
@@ -30,70 +28,41 @@
  * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
  * OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Warning: many of these routines directly touch cpu registers
- * it is assumed that this is initilization code and interrupts are
- * off.
- *
- * @author Eric B. Decker
  */
 
-#include "hardware.h"
-#include "cpu_stack.h"
+/**
+ * Generic table reader.
+ *
+ * @author Martin Cerveny
+ */
 
-#ifndef noinit
-#define noinit	__attribute__ ((section(".noinit"))) 
-#endif
+interface TableReader {
 
-noinit uint32_t stack_size;
+	/**
+	 * Set "row" index to first row
+	 * 
+	 * @param row pointer to "row" index
+	 * @param rowptrsize size of  "row" index 
+	 * @return SUCCESS - *row contains valid "row" index, ESIZE - rowptrsize too small to hold index, ELAST - table is empty
+	 */
+	command error_t rowFirst(void * row, uint8_t rowptrsize);
 
-module PlatformP {
-  provides {
-    interface Init;
-    interface Platform;
-    interface StdControl;
-  }
-  uses {
-    interface Init as PlatformPins;
-    interface Init as PlatformLeds;
-    interface Init as PlatformClock;
-    interface Init as PeripheralInit;
-    interface Stack;
-  }
-}
+	/**
+	 * Set "row" index to next row
+	 *
+	 * @param row pointer to "row" index (contains previous valid "row" index)
+	 * @param rowptrsize size of  "row" index 
+	 * @return SUCCESS - *row contains valid "row" index, ESIZE - rowptrsize too small to hold index, ELAST - no more rows
+	 */
+	command error_t rowNext(void * row, uint8_t rowptrsize);
 
-implementation {
-  command error_t Init.init() {
-//    call Stack.init();
-//    stack_size = call Stack.size();
-
-    call PlatformLeds.init();   // Initializes the Leds
-    call PeripheralInit.init();
-    return SUCCESS;
-  }
-
-
-  /*
-   * dummy StdControl for PlatformSerial.
-   */
-  command error_t StdControl.start() {
-    return SUCCESS;
-  }
-
-  command error_t StdControl.stop() {
-    return SUCCESS;
-  }
-
-
-  /* T32 is a count down so negate it */
-  async command uint32_t Platform.usecsRaw()       { return -(TIMER32_1->VALUE); }
-  async command uint32_t Platform.usecsRawSize()   { return 32; }
-  async command uint32_t Platform.jiffiesRaw()     { return (TIMER_A0->R); }
-  async command uint32_t Platform.jiffiesRawSize() { return 16; }
-
-
-  /***************** Defaults ***************/
-  default command error_t PeripheralInit.init() {
-    return SUCCESS;
-  }
+	/**
+	 *
+	 * @param row pointer to "row" index 
+	 * @param colid id of column to read 
+	 * @param col pointer to receive data of column
+	 * @param colptrsize size of data 
+	 * @return SUCCESS - *col contains valid data, ESIZE - colptrsize too small to hold data, FAIL - row not found (invalid "row" index) or invalid colid
+	 */
+	command error_t colRead(void * row, uint8_t col_id, void * col, uint8_t colptrsize);
 }

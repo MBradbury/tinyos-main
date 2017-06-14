@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Eric B. Decker
+ * Copyright (c) 2012 Martin Cerveny
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -8,12 +8,10 @@
  *
  * - Redistributions of source code must retain the above copyright
  *   notice, this list of conditions and the following disclaimer.
- *
  * - Redistributions in binary form must reproduce the above copyright
  *   notice, this list of conditions and the following disclaimer in the
  *   documentation and/or other materials provided with the
  *   distribution.
- *
  * - Neither the name of the copyright holders nor the names of
  *   its contributors may be used to endorse or promote products derived
  *   from this software without specific prior written permission.
@@ -30,70 +28,56 @@
  * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
  * OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Warning: many of these routines directly touch cpu registers
- * it is assumed that this is initilization code and interrupts are
- * off.
- *
- * @author Eric B. Decker
  */
 
-#include "hardware.h"
-#include "cpu_stack.h"
+ 
+/**
+ * The application sends periodically unicast hello packet to all known destinations.
+ * Packet is send/received with multihop (MHSenderC/MHReceiverC).
+ * Routing to multihop engine is provided by babel routing protocol (BabelRoutingC).
+ * All destination is enumerated from routing table of babel routing protocol (BabelRoutingC.RoutingTable).
+ *
+ * @author Martin Cerveny
+ **/ 
 
-#ifndef noinit
-#define noinit	__attribute__ ((section(".noinit"))) 
-#endif
-
-noinit uint32_t stack_size;
-
-module PlatformP {
-  provides {
-    interface Init;
-    interface Platform;
-    interface StdControl;
-  }
-  uses {
-    interface Init as PlatformPins;
-    interface Init as PlatformLeds;
-    interface Init as PlatformClock;
-    interface Init as PeripheralInit;
-    interface Stack;
-  }
+configuration MHHelloAppC {
 }
-
 implementation {
-  command error_t Init.init() {
-//    call Stack.init();
-//    stack_size = call Stack.size();
+	components MainC, MHHelloC, LedsC;
+	components new TimerMilliC() as Timer;
 
-    call PlatformLeds.init();   // Initializes the Leds
-    call PeripheralInit.init();
-    return SUCCESS;
-  }
+	MHHelloC->MainC.Boot;
 
+	MHHelloC.Timer->Timer;
+	MHHelloC.Leds->LedsC;
 
-  /*
-   * dummy StdControl for PlatformSerial.
-   */
-  command error_t StdControl.start() {
-    return SUCCESS;
-  }
+	components SerialPrintfC;
 
-  command error_t StdControl.stop() {
-    return SUCCESS;
-  }
+	components LocalIeeeEui64C;
+	MHHelloC.LocalIeeeEui64->LocalIeeeEui64C;
 
+	components ActiveMessageAddressC;
+	MHHelloC.ActiveMessageAddress->ActiveMessageAddressC;
 
-  /* T32 is a count down so negate it */
-  async command uint32_t Platform.usecsRaw()       { return -(TIMER32_1->VALUE); }
-  async command uint32_t Platform.usecsRawSize()   { return 32; }
-  async command uint32_t Platform.jiffiesRaw()     { return (TIMER_A0->R); }
-  async command uint32_t Platform.jiffiesRawSize() { return 16; }
+	// L4
+	components new MHSenderC(0x80+1);
+	MHHelloC.Packet->MHSenderC;
+	MHHelloC.AMPacket->MHSenderC;
+	MHHelloC.AMSend->MHSenderC;
+	components new MHReceiverC(0x80+1);
+	MHHelloC.Receive -> MHReceiverC;
 
+	// routing (need L3 packet access)
+	components BabelRoutingC;
+	components MultiHopC;
+	BabelRoutingC.RouteSelect<-MultiHopC.RouteSelect;
+	BabelRoutingC.Packet->MultiHopC.Packet;
+	BabelRoutingC.AMPacket->MultiHopC.AMPacket;
 
-  /***************** Defaults ***************/
-  default command error_t PeripheralInit.init() {
-    return SUCCESS;
-  }
+	// other
+	MHHelloC.RoutingTable->BabelRoutingC.RoutingTable;
+	MHHelloC.MHControl->MultiHopC.SplitControl;
+	
+	components ActiveMessageC;
+	MHHelloC.SubAMPacket -> ActiveMessageC.AMPacket;
 }
