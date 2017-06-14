@@ -6,7 +6,7 @@ endif
 
 export GCC=gcc
 GPP=g++ -std=gnu++11
-OPTFLAGS = -g -O2 -msse4.2 -maes -mpclmul -flto -fno-strict-aliasing -DTOSSIM_NO_DEBUG
+OPTFLAGS = -g -O0 -fno-strict-aliasing -DTOSSIM_NO_DEBUG
 LIBS = -lm
 PFLAGS += -DTOSSIM -fnesc-nido-tosnodes=$(MAX_TOSSIM_NODES) -fnesc-simulate -fnesc-nido-motenumber='sim_node\(\)' -fnesc-gcc="$(GCC)"
 PFLAGS += -I%T/lib/tossim
