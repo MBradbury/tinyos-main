@@ -4,7 +4,7 @@
 ### --- Set standard defaults for user-definable variables
 ### ---
 
-OPTFLAGS ?= -Os
+OPTFLAGS ?= -Os -fno-strict-aliasing
 
 NESC_FLAGS ?= -Wnesc-all -fnesc-include=tos
 NESC_SCHEDULER ?= TinySchedulerC,TinySchedulerC.TaskBasic,TaskBasic,TaskBasic,runTask,postTask

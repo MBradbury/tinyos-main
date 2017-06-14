@@ -43,8 +43,6 @@
 %module TOSSIM
 
 %include <std_shared_ptr.i>
-%shared_ptr(MAC)
-%shared_ptr(Radio)
 %shared_ptr(Packet)
 %shared_ptr(Variable)
 
@@ -285,94 +283,100 @@ FILE* object_to_file(PyObject* o)
     $1 = object_to_file($input);
     if ($1 == NULL)
     {
-        return NULL;
+        SWIG_fail;
     }
 }
 
+
 %typemap(out) variable_string_t {
+    if (strcmp($1.type, "<no such variable>") == 0) {
+        PyErr_Format(PyExc_RuntimeError, "no such variable");
+        SWIG_fail;
+    }
+
     if ($1.isArray) {
         $result = listFromArray($1.type, $1.ptr, $1.len);
     }
     else {
         $result = valueFromScalar($1.type, $1.ptr, $1.len);
     }
+
     if ($result == NULL) {
         PyErr_SetString(PyExc_RuntimeError, "Error generating Python type from TinyOS variable.");
+        SWIG_fail;
     }
 }
 
 %{
-bool fill_nesc_app(NescApp* app, int i, PyObject* name, PyObject* array, PyObject* format)
+bool fill_nesc_app(NescApp* app, PyObject* name, PyObject* value)
 {
+    if (!PyTuple_Check(value) || PyTuple_GET_SIZE(value) != 2)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "bad value");
+        return false;
+    }
+
+    PyObject* array = PyTuple_GET_ITEM(value, 0);
+    PyObject* format = PyTuple_GET_ITEM(value, 1);
+
 #if PY_VERSION_HEX < 0x03000000
-    if (PyString_Check(name) && PyString_Check(format) && PyString_Check(array)) {
-        app->variableNames[i] = PyString_AsString(name);
-        app->variableTypes[i] = PyString_AsString(format);
-        app->variableArray[i] = (strcmp(PyString_AsString(array), "array") == 0);
+    if (PyString_Check(name) && PyString_Check(format) && PyBool_Check(array)) {
+        app->variables[PyString_AsString(name)] =
+            std::make_tuple<bool, std::string>(
+                array == Py_True,
+                PyString_AsString(format)
+            );
 
         return true;
     }
-    else {
-        PyErr_SetString(PyExc_RuntimeError, "bad string");
-        return false;
-    }
 #else
-    if (PyUnicode_Check(name) && PyUnicode_Check(format) && PyUnicode_Check(array)) {
+    if (PyUnicode_Check(name) && PyUnicode_Check(format) && PyBool_Check(array)) {
 
         PyObject* name_ascii = PyUnicode_AsASCIIString(name);
         PyObject* format_ascii = PyUnicode_AsASCIIString(format);
-        PyObject* array_ascii = PyUnicode_AsASCIIString(array);
 
-        if (name_ascii == NULL || format_ascii == NULL || array_ascii == NULL)
+        if (name_ascii == NULL || format_ascii == NULL)
         {
             Py_XDECREF(name_ascii);
             Py_XDECREF(format_ascii);
-            Py_XDECREF(array_ascii);
 
             PyErr_SetString(PyExc_RuntimeError, "bad string not ascii");
             return false;
         }
 
-        app->variableNames[i] = PyBytes_AsString(name_ascii);
-        app->variableTypes[i] = PyBytes_AsString(format_ascii);
-        app->variableArray[i] = (strcmp(PyBytes_AsString(array_ascii), "array") == 0);
+        app->variables[PyBytes_AsString(name_ascii)] =
+            std::make_tuple<bool, std::string>(
+                array == Py_True,
+                PyBytes_AsString(format_ascii)
+            );
 
         Py_DECREF(name_ascii);
         Py_DECREF(format_ascii);
-        Py_DECREF(array_ascii);
         
         return true;
     }
+#endif
     else {
         PyErr_SetString(PyExc_RuntimeError, "bad string");
         return false;
     }
-#endif
 }
-
 %}
 
 %typemap(in) NescApp {
-    if (!PyList_Check($input)) {
-        PyErr_SetString(PyExc_TypeError, "Requires a list as a parameter.");
+    if (!PyDict_Check($input)) {
+        PyErr_SetString(PyExc_TypeError, "Requires a dict as a parameter.");
         SWIG_fail;
     }
     else {
-        Py_ssize_t size = PyList_Size($input);
-        Py_ssize_t i = 0;
+        NescApp app;
 
-        if (size < 0 || size % 3 != 0) {
-            PyErr_SetString(PyExc_RuntimeError, "List must have 3*N elements.");
-            SWIG_fail;
-        }
+        PyObject *key, *value;
+        Py_ssize_t pos = 0;
 
-        NescApp app(static_cast<unsigned int>(size) / 3);
-
-        for (i = 0; i < app.numVariables; i++) {
-            PyObject* name = PyList_GET_ITEM($input, 3 * i);
-            PyObject* array = PyList_GET_ITEM($input, (3 * i) + 1);
-            PyObject* format = PyList_GET_ITEM($input, (3 * i) + 2);
-            if (!fill_nesc_app(&app, i, name, array, format))
+        while (PyDict_Next($input, &pos, &key, &value))
+        {
+            if (!fill_nesc_app(&app, key, value))
             {
                 SWIG_fail;
             }
@@ -395,33 +399,80 @@ typedef struct variable_string {
 %ignore NescApp;
 class NescApp {
 public:
-    NescApp(unsigned int size)
-        : numVariables(size)
-        , variableNames(size)
-        , variableTypes(size)
-        , variableArray(size)
-    {
-    }
-
-    unsigned int numVariables;
-    std::vector<std::string> variableNames;
-    std::vector<std::string> variableTypes;
-    std::vector<bool> variableArray;
+    std::unordered_map<std::string, std::tuple<bool, std::string>> variables;
 };
 
+#define REVERSE_CONVERT_TYPE(NAME, CONVERT_FUNCTION) \
+if (fmt == #NAME) { \
+    const NAME val = (NAME)CONVERT_FUNCTION(data); \
+    if (PyErr_Occurred()) \
+    { \
+        return NULL; \
+    } \
+    $self->setData(val); \
+    Py_RETURN_NONE; \
+}
+
+%nodefaultctor Variable;
 class Variable {
  public:
-    Variable(const char* name, const char* format, int array, int mote);
     ~Variable();
-    variable_string_t getData();  
+
+    variable_string_t getData();
+
+    %extend {
+        PyObject* setData(PyObject* data)
+        {
+            const std::string& fmt = $self->getFormat();
+
+            if (PyString_CheckExact(data))
+            {
+                char* bytes = PyString_AS_STRING(data);
+                Py_ssize_t size = PyString_GET_SIZE(data);
+
+                bool result = $self->setData(bytes, size);
+
+                if (!result)
+                {
+                    PyErr_Format(PyExc_RuntimeError,
+                        "The provided bytes are of length %zd whereas %zu was expected.",
+                        size, $self->getLen());
+                    return NULL;
+                }
+
+                Py_RETURN_NONE;
+            }
+
+            REVERSE_CONVERT_TYPE(uint8_t, PyLong_AsUnsignedLong)
+            REVERSE_CONVERT_TYPE(uint16_t, PyLong_AsUnsignedLong)
+            REVERSE_CONVERT_TYPE(uint32_t, PyLong_AsUnsignedLong)
+            REVERSE_CONVERT_TYPE(uint64_t, PyLong_AsUnsignedLongLong)
+            REVERSE_CONVERT_TYPE(int8_t, PyLong_AsLong)
+            REVERSE_CONVERT_TYPE(int16_t, PyLong_AsLong)
+            REVERSE_CONVERT_TYPE(int32_t, PyLong_AsLong)
+            REVERSE_CONVERT_TYPE(int64_t, PyLong_AsLongLong)
+            REVERSE_CONVERT_TYPE(char, PyLong_AsLong)
+            REVERSE_CONVERT_TYPE(short, PyLong_AsLong)
+            REVERSE_CONVERT_TYPE(int, PyLong_AsLong)
+            REVERSE_CONVERT_TYPE(long, PyLong_AsLong)
+            REVERSE_CONVERT_TYPE(unsigned char, PyLong_AsUnsignedLong)
+            REVERSE_CONVERT_TYPE(unsigned short, PyLong_AsUnsignedLong)
+            REVERSE_CONVERT_TYPE(unsigned int, PyLong_AsUnsignedLong)
+            REVERSE_CONVERT_TYPE(unsigned long, PyLong_AsUnsignedLong)
+            REVERSE_CONVERT_TYPE(float, PyFloat_AsDouble)
+            REVERSE_CONVERT_TYPE(double, PyFloat_AsDouble)
+
+            PyErr_Format(PyExc_TypeError, "Unknown type.");
+            return NULL;
+        }
+    }
 };
 
+%nodefaultctor Mote;
 class Mote {
- protected:
-    Mote(const NescApp* app);
-    ~Mote();
-
  public:
+    ~Mote();
+    
     unsigned long id() const noexcept;
   
     long long int euid() const noexcept;
@@ -436,6 +487,17 @@ class Mote {
     bool isOn();
     void turnOff();
     void turnOn();
+
+    %exception getVariable(const char*) {
+        try {
+            $action
+        }
+        catch (std::runtime_error ex) {
+            PyErr_Format(PyExc_RuntimeError, "No such variable as %s.", arg2);
+            SWIG_fail;
+        }
+    }
+
     std::shared_ptr<Variable> getVariable(const char* name_cstr);
 
     void reserveNoiseTraces(size_t num_traces);
@@ -464,9 +526,11 @@ class Mote {
                 if (PyLong_Check(trace)) {
                     trace_int = PyLong_AsLong(trace);
                 }
+%#if PY_VERSION_HEX < 0x03000000
                 else if (PyInt_Check(trace)) {
                     trace_int = PyInt_AsLong(trace);
                 }
+%#endif
                 else {
                     PyErr_SetString(PyExc_TypeError, "Requires a list of ints as a parameter.");
                     return NULL;
@@ -549,7 +613,7 @@ class Mote {
 
 class Tossim {
  public:
-    Tossim(NescApp app);
+    Tossim(NescApp app, bool should_free=true);
     ~Tossim();
     
     void init();
@@ -558,10 +622,10 @@ class Tossim {
     double timeInSeconds() const noexcept;
     static long long int ticksPerSecond() noexcept;
     void setTime(long long int time) noexcept;
-    const char* timeStr() noexcept;
+    std::string timeStr() const;
 
-    Mote* currentNode() noexcept;
-    Mote* getNode(unsigned long nodeID) noexcept;
+    Mote* currentNode();
+    Mote* getNode(unsigned long nodeID);
     void setCurrentNode(unsigned long nodeID) noexcept;
 
     void addChannel(const char* channel, FILE* file);
@@ -586,7 +650,7 @@ class Tossim {
         std::function<bool()> continue_events,
         std::function<void(long long int)> callback);
 
-    std::shared_ptr<MAC> mac();
-    std::shared_ptr<Radio> radio();
+    MAC& mac();
+    Radio& radio();
     std::shared_ptr<Packet> newPacket();
 };

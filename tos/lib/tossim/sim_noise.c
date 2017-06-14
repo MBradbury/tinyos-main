@@ -364,7 +364,7 @@ void sim_noise_alarm() {
 }
 #endif
 
-char sim_noise_gen(uint16_t node_id, uint8_t channel)__attribute__ ((C, spontaneous))
+char sim_noise_gen(uint16_t node_id, uint8_t channel) __attribute__ ((C, spontaneous))
 {
   const uint8_t cchannel = (channel >= 11 && channel <= 26) ? (channel - 11) : channel;
   int i;

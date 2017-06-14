@@ -61,7 +61,7 @@ uint16_t TOS_NODE_ID = 1;
 
 static bool python_event_called = false;
 
-Variable::Variable(const std::string& name, const char* formatStr, bool array, int which)
+Variable::Variable(const std::string& name, const std::string& formatStr, bool array, int which)
   : realName(name)
   , format(formatStr)
 
@@ -120,6 +120,21 @@ variable_string_t Variable::getData() {
   return str;
 }
 
+bool Variable::setData(const void* new_value, size_t length) {
+
+  if (ptr == nullptr || new_value == nullptr) {
+    return false;
+  }
+
+  if (length != len || length == 0) {
+    return false;
+  }
+
+  memcpy(ptr, new_value, len);
+
+  return true;
+}
+
 Mote::Mote(const NescApp* n) : app(n) {
 }
 
@@ -172,37 +187,31 @@ void Mote::setID(unsigned long val) noexcept {
 }
 
 std::shared_ptr<Variable> Mote::getVariable(const char* name_cstr) {
-  std::shared_ptr<Variable> var;
-
   std::string name(name_cstr);
 
   auto find = varTable.find(name);
 
   if (find == varTable.end()) {
-    const char* typeStr = "";
-    bool isArray = false;
-    // Could hash this for greater efficiency,
-    // but that would either require transformation
-    // in Tossim class or a more complex typemap.
     if (app != nullptr) {
-      for (unsigned int i = 0; i < app->numVariables; i++) {
-        if (name == app->variableNames[i]) {
-          typeStr = app->variableTypes[i].c_str();
-          isArray = app->variableArray[i];
-          break;
-        }
+      auto find_var = app->variables.find(name);
+
+      if (find_var != app->variables.end()) {
+        const bool isArray = std::get<0>(find_var->second);
+        const std::string& typeStr = std::get<1>(find_var->second);
+
+        auto var = std::make_shared<Variable>(name, typeStr, isArray, nodeID);
+
+        varTable.emplace(std::move(name), var);
+
+        return var;
       }
     }
 
-    var = std::make_shared<Variable>(name, typeStr, isArray, nodeID);
-
-    varTable.emplace(std::move(name), var);
+    throw std::runtime_error("no such variable");
   }
   else {
-    var = find->second;
+    return find->second;
   }
-
-  return var;
 }
 
 void Mote::reserveNoiseTraces(size_t num_traces) {
@@ -222,16 +231,22 @@ int Mote::generateNoise(int when) {
 }
 
 
-Tossim::Tossim(NescApp n)
+Tossim::Tossim(NescApp n, bool should_free_at_dtor)
   : app(std::move(n))
   , motes(TOSSIM_MAX_NODES)
+  , _mac()
+  , _radio()
   , duration_started(false)
+  , should_free(should_free_at_dtor)
 {
   init();
 }
 
 Tossim::~Tossim() {
-  sim_end();
+  if (should_free)
+  {
+    sim_end();
+  }
 }
 
 void Tossim::init(){
@@ -250,8 +265,9 @@ long long int Tossim::ticksPerSecond() noexcept {
   return sim_ticks_per_sec();
 }
 
-const char* Tossim::timeStr() noexcept {
-  sim_print_now(timeBuf, 128);
+std::string Tossim::timeStr() const {
+  std::string timeBuf(128, '\0');
+  sim_print_now(const_cast<char*>(timeBuf.data()), timeBuf.size() - 1);
   return timeBuf;
 }
 
@@ -259,7 +275,7 @@ void Tossim::setTime(long long int val) noexcept {
   sim_set_time(val);
 }
 
-Mote* Tossim::currentNode() noexcept {
+Mote* Tossim::currentNode() {
   return getNode(sim_node());
 }
 
@@ -271,12 +287,9 @@ Mote* Tossim::getNode(unsigned long nodeID) {
   if (motes[nodeID] == nullptr) {
     motes[nodeID].reset(new Mote(&app));
 
-    if (nodeID == TOSSIM_MAX_NODES) {
-      nodeID = 0xFFFF;
-    }
-
     motes[nodeID]->setID(nodeID);
   }
+
   return motes[nodeID].get();
 }
 
@@ -437,12 +450,12 @@ long long int Tossim::runAllEventsWithTriggeredMaxTimeAndCallback(
   return event_count;
 }
 
-std::shared_ptr<MAC> Tossim::mac() {
-  return std::make_shared<MAC>();
+MAC& Tossim::mac() {
+  return _mac;
 }
 
-std::shared_ptr<Radio> Tossim::radio() {
-  return std::make_shared<Radio>();
+Radio& Tossim::radio() {
+  return _radio;
 }
 
 std::shared_ptr<Packet> Tossim::newPacket() {
