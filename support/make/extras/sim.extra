@@ -1,10 +1,14 @@
 #-*-Makefile-*- vim:syntax=make
 
+ifndef MAX_TOSSIM_NODES
+MAX_TOSSIM_NODES = 700
+endif
+
 export GCC=gcc
 GPP=g++ -std=gnu++11
-OPTFLAGS = -g -O0 -fno-strict-aliasing -DTOSSIM_NO_DEBUG
-LIBS = -lm -lstdc++
-PFLAGS += -DTOSSIM -fnesc-nido-tosnodes=700 -fnesc-simulate -fnesc-nido-motenumber='sim_node\(\)' -fnesc-gcc="$(GCC)"
+OPTFLAGS = -g -O2 -msse4.2 -maes -mpclmul -flto -fno-strict-aliasing -DTOSSIM_NO_DEBUG
+LIBS = -lm
+PFLAGS += -DTOSSIM -fnesc-nido-tosnodes=$(MAX_TOSSIM_NODES) -fnesc-simulate -fnesc-nido-motenumber='sim_node\(\)' -fnesc-gcc="$(GCC)"
 PFLAGS += -I%T/lib/tossim
 WFLAGS = -Wno-nesc-data-race
 PYTHON_VERSION ?= $(shell python --version 2>&1 | sed 's/Python \([23]\)\.\([0-9]\)\.[0-9]+\{0,1\}.*/\1.\2/')
