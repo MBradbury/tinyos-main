@@ -381,6 +381,7 @@ implementation {
 			// receivers: a higher layer performs the copy.
 			tossim_metadata_t* const meta = (tossim_metadata_t*)&mine->msg->metadata;
 			meta->strength = mine->strength;
+			meta->lqi = mine->lqi;
 			
 			dbg_clear("CpmModelC,SNRLoss", "	-signalling reception\n");
 			signal Model.receive(mine->msg);
