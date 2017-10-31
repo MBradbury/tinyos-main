@@ -168,7 +168,7 @@ implementation {
   }
   
   async command bool UartByte.sendAvail[uint8_t id]() {
-    if (call UsciResource.isOwner[id]() == FALSE)
+    if (call UsartResource.isOwner[id]() == FALSE)
       return FALSE;
     return call Usart.isTxIntrPending();
   }
@@ -194,7 +194,7 @@ implementation {
   
 
   async command bool UartByte.receiveAvail[uint8_t id]() {
-    if (call UsciResource.isOwner[id]() == FALSE)
+    if (call UsartResource.isOwner[id]() == FALSE)
       return FALSE;
     return call Usart.isRxIntrPending();
   }
