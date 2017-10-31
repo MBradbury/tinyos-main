@@ -1,0 +1,39 @@
+## wsn430v13 Platform
+PFLAGS += -I%T/platforms/wsn430v13
+PFLAGS += -I%T/platforms/wsn430v13/chips/msp430
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101
+
+## Unique ID chip
+PFLAGS += -I%T/chips/ds2411
+
+## MSP430 Chip
+PFLAGS += -I%T/chips/msp430
+PFLAGS += -I%T/chips/msp430/adc12
+PFLAGS += -I%T/chips/msp430/dma
+PFLAGS += -I%T/chips/msp430/pins
+PFLAGS += -I%T/chips/msp430/timer
+PFLAGS += -I%T/chips/msp430/usart
+PFLAGS += -I%T/chips/msp430/sensors
+
+## Generic import
+PFLAGS += -I%T/lib/timer
+PFLAGS += -I%T/lib/serial
+PFLAGS += -I%T/lib/power
+
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/alarm
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/control
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/csma
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/interfaces
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/link
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/lowpan
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/lpl
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/packet
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/receive
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/spi
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/transmit
+PFLAGS += -I%T/platforms/wsn430v13/chips/cc1101/unique
+
+PFLAGS += -mmcu=msp430f1611
+PFLAGS += -fnesc-target=msp430
+PFLAGS += -fnesc-no-debug

@@ -1,0 +1,48 @@
+# WSN430v14 - platform includes
+#
+# Includes that should take precedence come first.  Platforms come before
+# chips because they may override files.  These must be specified as
+# @includes instead of -I's to @opts, otherwise the %T won't be processed
+# by ncc.
+
+## wsn430v14 Platform
+PFLAGS += -I%T/platforms/wsn430v14
+PFLAGS += -I%T/platforms/wsn430v14/chips/cc2420
+PFLAGS += -I%T/platforms/wsn430v14/chips/msp430
+
+## Unique ID chip
+PFLAGS += -I%T/chips/ds2411
+
+## MSP430 Chip
+PFLAGS += -I%T/chips/msp430
+PFLAGS += -I%T/chips/msp430/adc12
+PFLAGS += -I%T/chips/msp430/dma
+PFLAGS += -I%T/chips/msp430/pins
+PFLAGS += -I%T/chips/msp430/timer
+PFLAGS += -I%T/chips/msp430/usart
+PFLAGS += -I%T/chips/msp430/sensors
+
+## Generic import
+PFLAGS += -I%T/lib/timer
+PFLAGS += -I%T/lib/serial
+PFLAGS += -I%T/lib/power
+
+## Radio chip
+PFLAGS += -I%T/chips/cc2420
+PFLAGS += -I%T/chips/cc2420/alarm
+PFLAGS += -I%T/chips/cc2420/control
+PFLAGS += -I%T/chips/cc2420/csma
+PFLAGS += -I%T/chips/cc2420/interfaces
+PFLAGS += -I%T/chips/cc2420/link
+PFLAGS += -I%T/chips/cc2420/lowpan
+PFLAGS += -I%T/chips/cc2420/lpl
+PFLAGS += -I%T/chips/cc2420/packet
+PFLAGS += -I%T/chips/cc2420/receive
+PFLAGS += -I%T/chips/cc2420/spi
+PFLAGS += -I%T/chips/cc2420/security
+PFLAGS += -I%T/chips/cc2420/transmit
+PFLAGS += -I%T/chips/cc2420/unique
+
+PFLAGS += -mmcu=msp430f1611
+PFLAGS += -fnesc-target=msp430
+PFLAGS += -fnesc-no-debug
